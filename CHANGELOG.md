@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - Unreleased
+
 ## [0.1.0] - 2026-09-06
 
 Initial build-out: the full P0 crate catalog, plus a

@@ -81,7 +81,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
@@ -94,44 +94,44 @@ homepage = "https://github.com/cool-japan/astrs"
 # Intra-workspace crates — dual-pinned (path for development, version for
 # crates.io). Members reference these with `*.workspace = true` only.
 # ---------------------------------------------------------------------------
-astrs = { path = "crates/astrs", version = "0.1.0" }
-astrs-capi = { path = "crates/astrs-capi", version = "0.1.0" }
-astrs-cdr = { path = "crates/astrs-cdr", version = "0.1.0" }
-astrs-cli = { path = "bins/astrs-cli", version = "0.1.0" }
-astrs-coordinator = { path = "crates/astrs-coordinator", version = "0.1.0" }
-astrs-daemon = { path = "crates/astrs-daemon", version = "0.1.0" }
-astrs-data = { path = "crates/astrs-data", version = "0.1.0" }
-astrs-discovery = { path = "crates/astrs-discovery", version = "0.1.0" }
-astrs-graph = { path = "crates/astrs-graph", version = "0.1.0" }
-astrs-idl = { path = "crates/astrs-idl", version = "0.1.0" }
-astrs-log = { path = "crates/astrs-log", version = "0.1.0" }
-astrs-manifest = { path = "crates/astrs-manifest", version = "0.1.0" }
-astrs-migrate = { path = "crates/astrs-migrate", version = "0.1.0" }
-astrs-node-api = { path = "crates/astrs-node-api", version = "0.1.0" }
-astrs-nodes-signal = { path = "crates/astrs-nodes-signal", version = "0.1.0" }
-astrs-nodes-vision = { path = "crates/astrs-nodes-vision", version = "0.1.0" }
-astrs-operator-api = { path = "crates/astrs-operator-api", version = "0.1.0" }
-astrs-operator-macros = { path = "crates/astrs-operator-macros", version = "0.1.0" }
-astrs-raft = { path = "crates/astrs-raft", version = "0.1.0" }
-astrs-record-node = { path = "bins/astrs-record-node", version = "0.1.0" }
-astrs-recording = { path = "crates/astrs-recording", version = "0.1.0" }
-astrs-ros2 = { path = "crates/astrs-ros2", version = "0.1.0" }
-astrs-rosbag = { path = "crates/astrs-rosbag", version = "0.1.0" }
-astrs-rtps = { path = "crates/astrs-rtps", version = "0.1.0" }
-astrs-runtime = { path = "crates/astrs-runtime", version = "0.1.0" }
-astrs-scheduler = { path = "crates/astrs-scheduler", version = "0.1.0" }
-astrs-shm = { path = "crates/astrs-shm", version = "0.1.0" }
-astrs-sim = { path = "crates/astrs-sim", version = "0.1.0" }
-astrs-store = { path = "crates/astrs-store", version = "0.1.0" }
-astrs-telemetry = { path = "crates/astrs-telemetry", version = "0.1.0" }
-astrs-tf = { path = "crates/astrs-tf", version = "0.1.0" }
-astrs-time = { path = "crates/astrs-time", version = "0.1.0" }
-astrs-transport = { path = "crates/astrs-transport", version = "0.1.0" }
-astrs-tui = { path = "crates/astrs-tui", version = "0.1.0" }
-astrs-urdf = { path = "crates/astrs-urdf", version = "0.1.0" }
-astrs-verify = { path = "crates/astrs-verify", version = "0.1.0" }
-astrs-wire = { path = "crates/astrs-wire", version = "0.1.0" }
-astrs-yaml = { path = "crates/astrs-yaml", version = "0.1.0" }
+astrs = { path = "crates/astrs", version = "0.1.1" }
+astrs-capi = { path = "crates/astrs-capi", version = "0.1.1" }
+astrs-cdr = { path = "crates/astrs-cdr", version = "0.1.1" }
+astrs-cli = { path = "bins/astrs-cli", version = "0.1.1" }
+astrs-coordinator = { path = "crates/astrs-coordinator", version = "0.1.1" }
+astrs-daemon = { path = "crates/astrs-daemon", version = "0.1.1" }
+astrs-data = { path = "crates/astrs-data", version = "0.1.1" }
+astrs-discovery = { path = "crates/astrs-discovery", version = "0.1.1" }
+astrs-graph = { path = "crates/astrs-graph", version = "0.1.1" }
+astrs-idl = { path = "crates/astrs-idl", version = "0.1.1" }
+astrs-log = { path = "crates/astrs-log", version = "0.1.1" }
+astrs-manifest = { path = "crates/astrs-manifest", version = "0.1.1" }
+astrs-migrate = { path = "crates/astrs-migrate", version = "0.1.1" }
+astrs-node-api = { path = "crates/astrs-node-api", version = "0.1.1" }
+astrs-nodes-signal = { path = "crates/astrs-nodes-signal", version = "0.1.1" }
+astrs-nodes-vision = { path = "crates/astrs-nodes-vision", version = "0.1.1" }
+astrs-operator-api = { path = "crates/astrs-operator-api", version = "0.1.1" }
+astrs-operator-macros = { path = "crates/astrs-operator-macros", version = "0.1.1" }
+astrs-raft = { path = "crates/astrs-raft", version = "0.1.1" }
+astrs-record-node = { path = "bins/astrs-record-node", version = "0.1.1" }
+astrs-recording = { path = "crates/astrs-recording", version = "0.1.1" }
+astrs-ros2 = { path = "crates/astrs-ros2", version = "0.1.1" }
+astrs-rosbag = { path = "crates/astrs-rosbag", version = "0.1.1" }
+astrs-rtps = { path = "crates/astrs-rtps", version = "0.1.1" }
+astrs-runtime = { path = "crates/astrs-runtime", version = "0.1.1" }
+astrs-scheduler = { path = "crates/astrs-scheduler", version = "0.1.1" }
+astrs-shm = { path = "crates/astrs-shm", version = "0.1.1" }
+astrs-sim = { path = "crates/astrs-sim", version = "0.1.1" }
+astrs-store = { path = "crates/astrs-store", version = "0.1.1" }
+astrs-telemetry = { path = "crates/astrs-telemetry", version = "0.1.1" }
+astrs-tf = { path = "crates/astrs-tf", version = "0.1.1" }
+astrs-time = { path = "crates/astrs-time", version = "0.1.1" }
+astrs-transport = { path = "crates/astrs-transport", version = "0.1.1" }
+astrs-tui = { path = "crates/astrs-tui", version = "0.1.1" }
+astrs-urdf = { path = "crates/astrs-urdf", version = "0.1.1" }
+astrs-verify = { path = "crates/astrs-verify", version = "0.1.1" }
+astrs-wire = { path = "crates/astrs-wire", version = "0.1.1" }
+astrs-yaml = { path = "crates/astrs-yaml", version = "0.1.1" }
 
 # ---------------------------------------------------------------------------
 # Examples and the conformance suite (§5.4, §20.3) — `publish = false`
