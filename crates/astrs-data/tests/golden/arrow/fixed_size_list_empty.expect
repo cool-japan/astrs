@@ -1,0 +1,7 @@
+schema fields=2
+field 0 name=xyz type=fsl(item:f32:0,3) nullable=1
+field 1 name=mat type=fsl(item:fsl(item:u8:0,2):0,2) nullable=0
+batch 0 rows=0 cols=2
+col 0 nulls=0
+col 1 nulls=0
+end

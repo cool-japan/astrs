@@ -1,0 +1,23 @@
+[package]
+name = "astrs-cdr"
+description = "CDR and XCDR1 serialization (plus XCDR2 read) with ROS 2 alignment rules."
+documentation = "https://docs.rs/astrs-cdr"
+readme = "README.md"
+keywords = ["astrs", "cdr", "ros2", "dds", "serialization"]
+categories = ["science::robotics", "encoding", "parsing"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

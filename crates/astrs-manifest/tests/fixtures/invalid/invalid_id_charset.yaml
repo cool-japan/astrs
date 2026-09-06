@@ -1,0 +1,3 @@
+nodes:
+  - id: "camera!1"
+    path: ./camera

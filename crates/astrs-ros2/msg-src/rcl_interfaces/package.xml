@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rcl_interfaces</name>
+  <version>1.0.0</version>
+  <description>ROS 2 interface definitions for rcl_interfaces, transcribed for AstRS code generation.</description>
+  <maintainer email="ros2-team@example.com">ROS 2 team</maintainer>
+  <license>Apache-2.0</license>
+</package>

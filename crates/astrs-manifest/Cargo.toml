@@ -1,0 +1,25 @@
+[package]
+name = "astrs-manifest"
+description = "Dataflow manifest parsing, validation, module expansion and JSON-schema emission for AstRS."
+documentation = "https://docs.rs/astrs-manifest"
+readme = "README.md"
+keywords = ["astrs", "manifest", "dataflow", "yaml", "robotics"]
+categories = ["science::robotics", "parsing", "config"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+astrs-yaml = { workspace = true }
+regex = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

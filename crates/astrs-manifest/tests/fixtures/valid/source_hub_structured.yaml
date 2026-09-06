@@ -1,0 +1,8 @@
+# The same hub source in its structured spelling: what a generated or
+# programmatically-edited manifest writes instead of doing string surgery.
+nodes:
+  - id: detector
+    hub:
+      name: yolo-detector
+      rev: v0.3.1
+    outputs: [detections]

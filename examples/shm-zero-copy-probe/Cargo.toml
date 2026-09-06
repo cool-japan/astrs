@@ -1,0 +1,33 @@
+[package]
+name = "shm-zero-copy-probe"
+description = "AstRS example: proves the same-host zero-copy plane is engaged end to end."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "shm_zero_copy_probe"
+path = "src/lib.rs"
+
+[[bin]]
+name = "shm-probe-producer"
+path = "src/bin/producer.rs"
+
+[[bin]]
+name = "shm-probe-consumer"
+path = "src/bin/consumer.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+astrs-shm = { workspace = true }
+astrs-wire = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

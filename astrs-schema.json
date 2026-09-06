@@ -1,0 +1,1067 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Manifest",
+  "description": "A parsed, not-yet-validated AstRS dataflow manifest (blueprint §8).\n\nConstruction and structural (single-document) parsing are separate from\ncross-referential validation:\n\n```no_run\nuse astrs_manifest::Manifest;\n\nlet yaml = std::fs::read_to_string(\"graph.yml\")?;\nlet manifest = Manifest::from_yaml_str(&yaml)?;\nmanifest.validate()?;\n# Ok::<(), Box<dyn std::error::Error>>(())\n```\n\n[`Manifest::from_yaml_str`] / [`Manifest::from_yaml_file`] only reject a\ndocument that fails to *parse* (wrong YAML syntax, wrong field types,\nunknown fields — deny_unknown_fields is enforced here). Structural\nproblems that require looking at the whole graph (duplicate ids,\ndangling input references, ...) are reported — **all of them, not just\nthe first** — by [`Manifest::validate`].",
+  "type": "object",
+  "properties": {
+    "astrs": {
+      "description": "The manifest format major version. Defaults to `\"1\"`\n([`DEFAULT_MANIFEST_FORMAT`]) when omitted.",
+      "type": "string"
+    },
+    "debug": {
+      "description": "Whether this dataflow may be tapped by `astrs topic echo/hz/info`\n(blueprint §13: \"daemon-side taps (explicitly enabled per dataflow\nwith `debug: true`)\"). Defaults to `false`: a tap forces every\ntapped output to stay on the daemon-mediated path rather than\nupgrading to zero-copy shared memory (§6.2), a cost `astrs-daemon`\nonly pays for a dataflow that opted in.",
+      "type": "boolean"
+    },
+    "deploy": {
+      "description": "The graph-wide default placement, overridden per node by\n[`Node::deploy`].",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Deploy"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "env": {
+      "description": "Graph-wide environment variables, overridden per node by\n[`Node::env`] on key conflicts — see [`Node::effective_env`].",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/EnvValue"
+      }
+    },
+    "exit_when_nodes_finish": {
+      "description": "Whether the dataflow should exit once every node with a finite\ninput set has finished. Defaults to `false` (long-running by\ndefault).",
+      "type": "boolean"
+    },
+    "health_check_interval": {
+      "description": "How often (seconds) the daemon health-checks each node. Defaults to\n[`default_health_check_interval`] (5.0).",
+      "type": "number",
+      "format": "double"
+    },
+    "module": {
+      "description": "This manifest's `module:` header (blueprint §8.5), present iff this\nmanifest is itself a reusable module — includable by another\nmanifest's [`Node::module`]-sourced node — rather than (or in\naddition to; nothing stops running a module standalone) a\ndirectly-runnable dataflow. See [`crate::expand`] for the\nflattening algorithm that consumes it, and\n[`crate::MODULE_BOUNDARY_NODE_ID`] for the `_mod` sentinel internal\nnodes wire to it with.\n\n[`Manifest::expand`] always clears this field on its output: a\nflattened manifest is never itself still a module.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModuleHeader"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "name": {
+      "description": "An optional display name for this dataflow.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "nodes": {
+      "description": "The dataflow's nodes. Required — a manifest with no nodes does\nnothing, and [`Manifest::validate`] does not currently flag an\nempty list as an error (an empty graph is unusual but not\ninherently invalid, e.g. as a scaffold mid-edit).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Node"
+      }
+    },
+    "strict_types": {
+      "description": "Whether edge type mismatches (absent an applicable `type_rules`\nentry) are hard errors rather than warnings. Defaults to `false`,\nmatching §9.2's default `ASTRS_TYPE_CHECK=warn` runtime behavior.",
+      "type": "boolean"
+    },
+    "type_rules": {
+      "description": "Implicit type-coercion rules for edge type-checking (`astrs-graph`;\nthis crate only syntax-checks the URNs involved).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TypeRule"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "nodes"
+  ],
+  "$defs": {
+    "BridgeDirection": {
+      "description": "Which way a bridged topic/service/action crosses the AstRS/ROS 2 boundary.",
+      "oneOf": [
+        {
+          "description": "ROS 2 → AstRS: the bridge subscribes on the ROS 2 side and\npublishes an AstRS output.",
+          "type": "string",
+          "const": "to_astrs"
+        },
+        {
+          "description": "AstRS → ROS 2: the bridge subscribes on the AstRS side (an input)\nand publishes on the ROS 2 side.",
+          "type": "string",
+          "const": "from_astrs"
+        }
+      ]
+    },
+    "Deploy": {
+      "description": "Where (and with what metadata) a node should run.\n\nAppears at the manifest root as the graph-wide default placement, and\non each [`crate::Node`] to override it. This crate does not merge the\ntwo (that is `astrs-graph`'s placement-planner concern, per the crate\ncatalog, §5.2) — it only models the shape.",
+      "type": "object",
+      "properties": {
+        "labels": {
+          "description": "Free-form placement labels (for future label-selector placement).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "machine": {
+          "description": "The target machine id, matched against a daemon's registered name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "working_dir": {
+          "description": "A working directory override for this placement.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Durability": {
+      "description": "DDS durability QoS (§10.2): whether late-joining subscribers receive\nhistory from before they attached.\n\nWritten in the manifest with a hyphen (`transient-local`), matching the\nblueprint's own prose spelling in §10.2 (\"durability\n(volatile/transient-local)\") — unlike the underscore-separated\n`restart_policy`/`queue_policy` values, which the blueprint shows in an\nactual YAML example (§8.1) rather than prose.",
+      "oneOf": [
+        {
+          "description": "No history is kept for late joiners (the DDS default).",
+          "type": "string",
+          "const": "volatile"
+        },
+        {
+          "description": "The last N samples (per `keep_last`/`keep_all`) are delivered to\nlate-joining subscribers.",
+          "type": "string",
+          "const": "transient-local"
+        }
+      ]
+    },
+    "DurationSecs": {
+      "description": "A duration: either a plain number of seconds, or a humantime-style string such as \"500ms\", \"1.5s\", \"2m\", \"1h\".",
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0.0
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h)?$"
+        }
+      ]
+    },
+    "EnvValue": {
+      "description": "A single environment value as written in a manifest `env:` map.\n\nSerialized untagged: a YAML scalar decides its own variant by its\nresolved YAML tag (`CAMERA_INDEX: 0` is `Int(0)`; `CAMERA_INDEX: \"0\"` is\n`String(\"0\")`), matching ordinary YAML type resolution rather than\nre-inferring types from string content.",
+      "anyOf": [
+        {
+          "description": "A string value; the only variant eligible for `$VAR` expansion.",
+          "type": "string"
+        },
+        {
+          "description": "A boolean value (`true` / `false`).",
+          "type": "boolean"
+        },
+        {
+          "description": "A signed 64-bit integer value.",
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "description": "A 64-bit floating point value.",
+          "type": "number",
+          "format": "double"
+        }
+      ]
+    },
+    "HubLongForm": {
+      "description": "The long-form shape of [`HubSource`], used both as the `visit_map` target\nfor [`HubSource`]'s hand-written `Deserialize` and as the source of its\nlong-form `Serialize`/`JsonSchema` representation. `deny_unknown_fields`\nhere is what enforces the \"no stray keys\" contract on the long form —\n[`HubSource`] itself cannot derive that attribute because it has a\nhand-written `Deserialize`. (The identical split [`crate::Input`] uses for\nits own two-form shape.)",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "rev": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "HubSource": {
+      "description": "An AstRS package-index source, given as a `name` or `name@rev` string, or as an object with `name` plus optional `rev`.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/HubLongForm"
+        }
+      ]
+    },
+    "Input": {
+      "description": "A `node/output` (or astrs/... virtual source) string, or a long-form object with `source` plus optional `queue_size`/`queue_policy`/`timeout`/`priority_lane`/`deadline`.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/InputLongForm"
+        }
+      ]
+    },
+    "InputLongForm": {
+      "description": "The long-form shape of [`Input`], used both as the `visit_map` target for\n[`Input`]'s hand-written `Deserialize` and as the source of its\n`Serialize`/`JsonSchema` long-form representation. `deny_unknown_fields`\nhere is what actually enforces the \"no stray keys\" contract on the long\nform — [`Input`] itself cannot derive that attribute because it has a\nhand-written `Deserialize`.",
+      "type": "object",
+      "properties": {
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationSecs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priority_lane": {
+          "$ref": "#/$defs/PriorityLane"
+        },
+        "queue_policy": {
+          "$ref": "#/$defs/QueuePolicy"
+        },
+        "queue_size": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "source": {
+          "type": "string"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationSecs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source"
+      ]
+    },
+    "LogLevel": {
+      "description": "The minimum severity a node's log records must meet to be kept.\n\nMirrors `tracing`'s level names; used for `min_log_level` on\n[`crate::Node`] and for the optional `/level` segment of the\n`astrs/logs[/level[/node]]` virtual source (§8.4).",
+      "oneOf": [
+        {
+          "description": "Fine-grained diagnostic detail, off by default in production.",
+          "type": "string",
+          "const": "trace"
+        },
+        {
+          "description": "Diagnostic detail useful during development.",
+          "type": "string",
+          "const": "debug"
+        },
+        {
+          "description": "Routine operational messages.",
+          "type": "string",
+          "const": "info"
+        },
+        {
+          "description": "Recoverable problems worth operator attention.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "Failures that likely require operator intervention.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "ModuleHeader": {
+      "description": "The `module:` header at a manifest root (blueprint §8.5), declaring that\nthis manifest is a reusable sub-graph — includable by another manifest's\nnode via that node's own `module:` field (a path to *this* manifest's\nfile) — rather than a directly-runnable top-level dataflow.\n\nA manifest carrying this header still parses and\n[validates](crate::Manifest::validate) like any other: nothing prevents\nrunning it standalone (its internal `_mod/<port>` references simply\nresolve against `inputs`/`outputs` below, with no external caller\nsupplying real values — see [`crate::Manifest::validate`]'s module-aware\nresolution). Module semantics only take effect when another manifest's\n[`crate::Node::module`] actually references this file, and that\nincluding manifest is run through [`crate::expand`].\n\n# Examples\n\n```\nuse astrs_manifest::Manifest;\n\nlet yaml = \"\\\nmodule:\n  name: perception\n  inputs: [frames]\n  outputs: [detections]\nnodes:\n  - id: detector\n    path: ./detector\n    inputs:\n      frames: _mod/frames\n    outputs: [detections]\n\";\nlet manifest = Manifest::from_yaml_str(yaml)?;\nmanifest.validate()?;\nlet header = manifest.module.as_ref().ok_or(\"expected a module header\")?;\nassert_eq!(header.name, \"perception\");\nassert_eq!(header.inputs, vec![\"frames\".to_string()]);\n# Ok::<(), Box<dyn std::error::Error>>(())\n```",
+      "type": "object",
+      "properties": {
+        "inputs": {
+          "description": "The boundary input port names this module declares. An internal\nnode's `source: _mod/<name>` is only valid for a `<name>` listed\nhere — see [`crate::Manifest::validate`].",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "description": "This module's display name.\n\nDocumentation only: [`crate::expand`] identifies a module\n*instantiation* by the including manifest's hosting node id, never\nby this field, so two modules may share a name without conflict.",
+          "type": "string"
+        },
+        "outputs": {
+          "description": "The boundary output port names this module declares. See\n[`crate::expand`] for how an internal node's own output surfaces as\none of these to whatever manifest includes this module.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "Node": {
+      "description": "One node in a [`crate::Manifest`]'s `nodes:` list (blueprint §8.3).\n\n# Source (exactly one)\n\nA node's source is not a single tagged field but a set of plain\noptional fields, validated for mutual exclusivity by\n[`crate::Manifest::validate`] rather than by the `Deserialize` shape — a tagged\n`enum` would force every source variant into one YAML key (`type:\ngit`), which is not how §8.1's examples are written, and combining\n`#[serde(flatten)]` with `#[serde(deny_unknown_fields)]` on the same\nstruct is rejected by serde outright. The recognized source *kinds* are:\n\n- **`path`** alone — a prebuilt executable path, or the literal\n  [`DYNAMIC_PATH_SENTINEL`] (`\"dynamic\"`) for an externally-attached\n  node.\n- **`git`** (+ optional `path` as the build artifact's location *within*\n  the checked-out repo, + at most one of `branch`/`tag`/`rev`) — §8.1's\n  `detector` node uses exactly this shape.\n- **`hub`** — a package fetched from the AstRS index by name, in either\n  of [`HubSource`]'s two spellings (`name`/`name@rev`, or a\n  `{ name, rev? }` map). What `git:` is to a repository, this is to the\n  package index.\n- **`module`** — a path to a reusable sub-graph manifest (§8.5),\n  flattened by [`crate::expand`].\n- **`operators`** — one or more runtime-hosted operators (§9.3).\n- **`ros2`** — a declarative ROS 2 bridge (§10.5).\n- **`record`** — the recorder sugar (§14): a list of `node/output`\n  strings to capture, expanding to an ordinary `astrs-record-node`.\n\nSee [`crate::Manifest::validate`] for the exact exclusivity rules enforced.",
+      "type": "object",
+      "properties": {
+        "args": {
+          "description": "Extra arguments appended to the spawned process's argv.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "branch": {
+          "description": "Check out this branch (at most one of `branch`/`tag`/`rev`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "build": {
+          "description": "The build command line, executed via the system shell with a\nscrubbed environment (§16). Not tokenized by this crate.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cpu_affinity": {
+          "description": "Pin the spawned process to these CPU core indices (§11.3): applied\nrace-free via `rustix::thread::sched_setaffinity` before the child's\nown program runs, on Linux — see `astrs_daemon::spawn::affinity` for\nthe mechanism. macOS (and every other non-Linux platform) has no\nper-process affinity API at all, so a request there is left unpinned\non purpose, logged once and counted, rather than approximated with a\nQoS-class hint that would not actually pin anything. Must be\nnon-empty when present (checked by [`crate::Manifest::validate`]) — an empty\nlist would mean \"pin to nothing,\" which is not a meaningful pin.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "deploy": {
+          "description": "Where and how this node is deployed, overriding the manifest-wide\ndefault placement.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Deploy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "description": "An optional free-form description.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env": {
+          "description": "Node-scoped environment variables, merged over the manifest-wide\n`env:` map with this node's values taking precedence on key\nconflicts (see [`Node::effective_env`]).",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/EnvValue"
+          }
+        },
+        "finish_grace_secs": {
+          "description": "How long to wait after `SIGTERM` before escalating to `SIGKILL`\nduring graceful shutdown (§12's finish-straggler watchdog).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationSecs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "git": {
+          "description": "A git repository URL to clone/build from (shells out to the system\n`git` binary — no `git2`/`libgit2`, per §2.2).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "health_check_timeout": {
+          "description": "How long to wait for a post-registration liveness ping before\ntreating the node as hung (§12).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationSecs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hub": {
+          "description": "An AstRS package-index source — see [`HubSource`] for the two\nspellings. Its own optional revision lives inside the value\n(`hub: pkg@v1`, or `hub: { name: pkg, rev: v1 }`), never in this\nnode's `rev:` field, which belongs to `git:` alone.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HubSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "description": "This node's id: unique within the manifest, charset\n`[a-zA-Z0-9_.-]+` (checked by [`crate::Manifest::validate`]). Referenced by\nother nodes' inputs as `<id>/<output>`.",
+          "type": "string"
+        },
+        "input_types": {
+          "description": "Type URNs for inputs, keyed by input name.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Urn"
+          }
+        },
+        "inputs": {
+          "description": "This node's inputs, keyed by input name. Each value is either a\nbare `node/output` string or a long form with queueing overrides —\nsee [`Input`].",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Input"
+          }
+        },
+        "max_log_size": {
+          "description": "The maximum size in bytes of one log file before rotation.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_restart_delay": {
+          "description": "The cap on the exponential-backoff restart delay.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationSecs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_restarts": {
+          "description": "The restart budget within `restart_window`. Requires\n`restart_policy` to be set to something other than `never`\n(checked by [`crate::Manifest::validate`]).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_rotated_files": {
+          "description": "The maximum number of rotated log files retained (default 5).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "min_log_level": {
+          "description": "The minimum log level retained for this node's log records.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LogLevel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "module": {
+          "description": "A path to a reusable sub-graph manifest (§8.5), resolved relative\nto the *including* manifest's own directory by [`crate::expand`] —\nnever the process's current working directory. The referenced\nmanifest must carry a [`crate::ModuleHeader`]; this node's own\n`inputs`/`outputs`/`input_types`/`output_types` wire up (a subset\nof) that header's declared boundary ports, exactly like any other\nnode's I/O.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "An optional human-readable display name, distinct from `id`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operators": {
+          "description": "One or more runtime-hosted operators (§9.3).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/OperatorConfig"
+          }
+        },
+        "output_types": {
+          "description": "Type URNs for outputs, keyed by output name.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Urn"
+          }
+        },
+        "outputs": {
+          "description": "This node's declared output names, referenced by other nodes as\n`<this id>/<name>`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "description": "A prebuilt executable path, the in-repo build artifact path when\n`git` is also set, or the literal `\"dynamic\"` sentinel.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pattern": {
+          "description": "The service/action wiring pattern this node participates in, if\nany (§9.4).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Pattern"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "record": {
+          "description": "The `record:` sugar: a list of `node/output` strings to capture\ninto a `.arec` recording (§14).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "restart_delay": {
+          "description": "The base delay before the first restart attempt; doubles per\nattempt up to `max_restart_delay` (§12's `restart_delay`×2^n).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationSecs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restart_policy": {
+          "description": "The supervised-restart policy. Absent means [`RestartPolicy::Never`]\n— see [`Node::effective_restart_policy`].",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RestartPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restart_window": {
+          "description": "The sliding window `max_restarts` is counted over.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationSecs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rev": {
+          "description": "Check out this commit-ish (at most one of `branch`/`tag`/`rev`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ros2": {
+          "description": "A declarative ROS 2 bridge configuration (§10.5).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ros2Config"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rt": {
+          "description": "The OS scheduling class this node's process is spawned under, and its\npriority within that class (§11.3) — see [`RtConfig`]. Absent means\nthe platform default (`SCHED_OTHER`), which is also what\n`rt: { policy: normal }` spells explicitly.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RtConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "send_stdout_as": {
+          "description": "Publish this node's captured stdout as an output with this name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shm_pool_size": {
+          "description": "Override the default SHM pool size (bytes) for this node's outputs.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "tag": {
+          "description": "Check out this tag (at most one of `branch`/`tag`/`rev`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "working_dir": {
+          "description": "The working directory the spawned process starts in.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "OperatorConfig": {
+      "description": "A runtime-hosted operator entry under a node's `operators:` source\n(§9.3).\n\n# `operator` names the type; the locators say where to find it\n\n[`OperatorConfig::operator`] is **always** required: it is the operator\n*type's* name, and every backend needs one — the compiled-in registry\nlooks it up directly, a shared library and a WebAssembly module each\nexport several operators and need to be told which, and a hub package is\nno different. What the three optional locator fields add is *where* that\nname is resolved:\n\n- **none of the three** — the hosting runtime binary's own\n  `astrs::register_operator!` registry. The flagship path of §9.3, the\n  default, and the only one with no loading step at all.\n- **`dylib`** — a path to a platform shared library (`.so`/`.dylib`/\n  `.dll`) the runtime opens with `dlopen`/`LoadLibrary`\n  (`astrs-runtime`'s `dylib-operators` feature).\n- **`wasm`** — a path to a WebAssembly module the runtime runs on its\n  pure-Rust `wasmi` interpreter (`astrs-runtime`'s `wasm-operators`\n  feature).\n- **`hub`** — a package fetched from the AstRS index by name, in either of\n  [`HubSource`]'s two spellings.\n\nAt most one locator may be present; [`crate::Manifest::validate`] rejects\na combination, exactly as it does for [`crate::Node`]'s own source kinds.\nKeeping `operator` required is what makes every pre-existing manifest, and\nevery existing consumer of this type, keep working unchanged: the new\nkinds are additive.\n\n`config` stays opaque JSON in every case: per-operator schemas are out of\nthis crate's scope.\n\n```yaml\noperators:\n  - id: crop\n    operator: CropOperator          # compiled-in registry\n  - id: detect\n    operator: YoloDetector\n    dylib: ./libyolo.so             # ...from a shared library\n  - id: filter\n    operator: BandPass\n    wasm: ./filter.wasm             # ...from a WebAssembly module\n  - id: track\n    operator: ByteTracker\n    hub: byte-tracker@v0.2.0        # ...from the package index\n```",
+      "type": "object",
+      "properties": {
+        "config": {
+          "description": "Free-form operator configuration, opaque to the manifest crate.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "dylib": {
+          "description": "A path to a platform shared library exporting this operator, loaded\nby `astrs-runtime`'s `dylib-operators` feature.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hub": {
+          "description": "An AstRS package-index source for this operator — see [`HubSource`]\nfor the two spellings (`name`/`name@rev`, or a `{ name, rev? }` map).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HubSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "description": "This operator instance's id, unique within the hosting node.",
+          "type": "string"
+        },
+        "inputs": {
+          "description": "This operator's inputs, keyed by input name (same short/long form\nas [`crate::Node::inputs`]).",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Input"
+          }
+        },
+        "operator": {
+          "description": "The operator type's name — the name it was registered under via\n`astrs::register_operator!`, or the name the shared library, wasm\nmodule or hub package exports it as. Always required; see the struct\ndocs for why the new locator fields did not turn this optional.",
+          "type": "string"
+        },
+        "outputs": {
+          "description": "This operator's declared output names.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "wasm": {
+          "description": "A path to a WebAssembly module implementing this operator, run by\n`astrs-runtime`'s `wasm-operators` feature on its pure-Rust `wasmi`\ninterpreter.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "operator"
+      ]
+    },
+    "Pattern": {
+      "description": "The service/action wiring pattern a node participates in.\n\nWritten in the manifest with hyphens (`service-server`), matching\nblueprint §8.3's literal spelling — unlike [`crate::RestartPolicy`] and\n[`crate::QueuePolicy`], which use underscores (§8.1's\n`restart_policy: on_failure`, `queue_policy: drop_oldest`).",
+      "oneOf": [
+        {
+          "description": "This node answers request/response service calls.",
+          "type": "string",
+          "const": "service-server"
+        },
+        {
+          "description": "This node issues request/response service calls.",
+          "type": "string",
+          "const": "service-client"
+        },
+        {
+          "description": "This node executes long-running goals with progress feedback.",
+          "type": "string",
+          "const": "action-server"
+        },
+        {
+          "description": "This node submits long-running goals and tracks their progress.",
+          "type": "string",
+          "const": "action-client"
+        }
+      ]
+    },
+    "PriorityLane": {
+      "description": "Which delivery lane an input rides (§11.3).\n\nThe daemon's control/data lane mechanism already decides this\nautomatically for a few reserved cases — the `astrs/status` virtual\nsource, in particular, always rides the control lane so lifecycle events\npre-empt data traffic, whatever this field says. What this field adds is\nthe ability to *promote* an ordinary input onto the control lane too (a\nsafety-critical command topic that must pre-empt a hot data stream, for\ninstance) without touching the daemon's own heuristics. The default,\n`data`, changes nothing: an input that does not name this field keeps\nexactly the lane it would already have gotten.",
+      "oneOf": [
+        {
+          "description": "The ordinary lane — fair round-robin against every other data input.",
+          "type": "string",
+          "const": "data"
+        },
+        {
+          "description": "Pre-empts the data lane (blueprint §11.3): a control-lane message is\nalways delivered before anything still queued on data.",
+          "type": "string",
+          "const": "control"
+        }
+      ]
+    },
+    "Qos": {
+      "description": "The QoS block of a `ros2:` bridge (§10.5).\n\nEvery field is optional; an absent field means \"let `astrs-rtps` pick\nits documented default\" (this crate does not encode RTPS defaults —\nthat is §10.2's concern, not the manifest's).",
+      "type": "object",
+      "properties": {
+        "deadline": {
+          "description": "Deadline QoS: the maximum expected period between samples.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationSecs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "durability": {
+          "description": "Durability: `volatile` or `transient-local`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Durability"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "keep_all": {
+          "description": "Request KEEP_ALL history instead of KEEP_LAST.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "keep_last": {
+          "description": "KEEP_LAST history depth.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "lease_duration": {
+          "description": "Liveliness lease duration (§10.2's WLP liveliness).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationSecs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reliable": {
+          "description": "Request the RELIABLE reliability kind rather than BEST_EFFORT.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "QueuePolicy": {
+      "description": "How a full input queue behaves under backpressure (§11.2).\n\nA node with no `queue_policy` field behaves as\n[`QueuePolicy::DropOldest`] — the safer default for a real-time\ndataflow, where an unbounded backlog is worse than a dropped stale\nframe. Written in the manifest with underscores (`drop_oldest`),\nmatching §8.1's literal `queue_policy: drop_oldest`.",
+      "oneOf": [
+        {
+          "description": "Drop the oldest queued message to make room for a new one.",
+          "type": "string",
+          "const": "drop_oldest"
+        },
+        {
+          "description": "Buffer beyond `queue_size` (up to 10x, per §11.2) before dropping\nthe newest message and logging/metricizing the overflow.",
+          "type": "string",
+          "const": "backpressure"
+        }
+      ]
+    },
+    "RestartPolicy": {
+      "description": "How the daemon supervises a node's process lifecycle (§12).\n\nWritten in the manifest with underscores (`on_failure`), matching §8.1's\nliteral `restart_policy: on_failure`.\n\nA node with no `restart_policy` field behaves as [`RestartPolicy::Never`]\n— see [`crate::Node::effective_restart_policy`], which is what the\nvalidation pass ([`crate::Manifest::validate`]) checks `max_restarts` against.",
+      "oneOf": [
+        {
+          "description": "The node is never restarted; a crash or exit is terminal.",
+          "type": "string",
+          "const": "never"
+        },
+        {
+          "description": "The node is restarted only after a non-zero exit or a crash, not\nafter a clean (zero) exit.",
+          "type": "string",
+          "const": "on_failure"
+        },
+        {
+          "description": "The node is restarted after any exit, clean or not.",
+          "type": "string",
+          "const": "always"
+        }
+      ]
+    },
+    "Ros2Config": {
+      "description": "The full `ros2:` bridge configuration block (§10.5).\n\nCovers the single-topic form (`topic`/`message_type`/`direction`), the\nbulk `topics: [...]` form, and the `service:`/`action:` + `role:` form,\nall as one struct — a node's `ros2:` block is expected to use exactly\none of these shapes, which [`crate::Manifest::validate`] does not\ncurrently enforce (see this module's top-level docs).",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action-bridge form: a ROS 2 action name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "compat": {
+          "description": "Which ROS 2 distribution's wire format to speak.",
+          "$ref": "#/$defs/RosCompat"
+        },
+        "direction": {
+          "description": "The single-topic form: which way the topic crosses the bridge.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BridgeDirection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message_type": {
+          "description": "The single-topic form: the ROS 2 message type, e.g.\n`sensor_msgs/msg/LaserScan`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "namespace": {
+          "description": "A ROS 2 namespace to mount the bridged entity under.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node_name": {
+          "description": "The participant name this bridge presents on the ROS 2 graph\n(visible to `ros2 node list` on a stock ROS box, per §10.4).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "qos": {
+          "description": "DDS QoS overrides for this bridge.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Qos"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "role": {
+          "description": "Server or client side of `service`/`action`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ros2Role"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "service": {
+          "description": "The service-bridge form: a ROS 2 service name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "topic": {
+          "description": "The single-topic form: a ROS 2 topic name, e.g. `/scan`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "topics": {
+          "description": "The bulk form: multiple topics bridged by one node.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Ros2Topic"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "compat"
+      ]
+    },
+    "Ros2Role": {
+      "description": "Whether a bridged `service:`/`action:` block acts as the server or the\nclient side of the exchange.",
+      "oneOf": [
+        {
+          "description": "This bridge answers requests/goals.",
+          "type": "string",
+          "const": "server"
+        },
+        {
+          "description": "This bridge issues requests/goals.",
+          "type": "string",
+          "const": "client"
+        }
+      ]
+    },
+    "Ros2Topic": {
+      "description": "One entry of a `ros2: { topics: [...] }` bulk bridge list (§10.5).",
+      "type": "object",
+      "properties": {
+        "direction": {
+          "description": "Which way this topic crosses the bridge.",
+          "$ref": "#/$defs/BridgeDirection"
+        },
+        "message_type": {
+          "description": "The ROS 2 message type, e.g. `sensor_msgs/msg/LaserScan`.",
+          "type": "string"
+        },
+        "topic": {
+          "description": "The ROS 2 topic name, e.g. `/scan`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "topic",
+        "message_type",
+        "direction"
+      ]
+    },
+    "RosCompat": {
+      "description": "Which ROS 2 distribution's wire-level quirks to speak (§10.2).\n\nHumble uses a 24-byte participant GID; Jazzy uses 16 bytes — the two\ndistributions are not wire-compatible with each other, so every bridge\nmust pick one explicitly (there is no sensible default).",
+      "oneOf": [
+        {
+          "description": "ROS 2 Humble Hawksbill (24-byte GID, `rmw_dds_common` graph).",
+          "type": "string",
+          "const": "humble"
+        },
+        {
+          "description": "ROS 2 Jazzy Jalisco (16-byte GID).",
+          "type": "string",
+          "const": "jazzy"
+        }
+      ]
+    },
+    "RtConfig": {
+      "description": "A node's `rt:` block: the OS scheduling class its process is spawned\nunder, and its priority within that class (blueprint §11.3).\n\n```yaml\nnodes:\n  - id: control-loop\n    path: ./control-loop\n    rt:\n      policy: fifo\n      priority: 80\n```\n\n[`RtConfig::priority`] is `Option` in the *shape* but not in the\n*contract*: [`crate::Manifest::validate`] requires it (in\n[`RT_PRIORITY_MIN`]`..=`[`RT_PRIORITY_MAX`]) whenever\n[`RtPolicy::is_realtime`] holds, and rejects it outright for\n[`RtPolicy::Normal`]. See this module's docs for why that split lives in\nthe validation pass rather than in `Deserialize`.\n\n# Examples\n\n```\nuse astrs_manifest::{Manifest, RtPolicy};\n\nlet yaml = \"\\\nnodes:\n  - id: control-loop\n    path: ./control-loop\n    rt:\n      policy: fifo\n      priority: 80\n\";\nlet manifest = Manifest::from_yaml_str(yaml)?;\nmanifest.validate()?;\n\nlet rt = manifest.nodes[0].rt.as_ref().ok_or(\"expected an rt block\")?;\nassert_eq!(rt.policy, RtPolicy::Fifo);\nassert_eq!(rt.priority, Some(80));\nassert!(rt.policy.is_realtime());\n# Ok::<(), Box<dyn std::error::Error>>(())\n```",
+      "type": "object",
+      "properties": {
+        "policy": {
+          "description": "The scheduling class. Defaults to [`RtPolicy::Normal`] when the key is\nomitted, so `rt: { priority: 80 }` is a rejected manifest (a priority\nwith no real-time policy to apply it to), not a silent promotion.",
+          "$ref": "#/$defs/RtPolicy"
+        },
+        "priority": {
+          "description": "The `sched_priority` within the class:\n[`RT_PRIORITY_MIN`]`..=`[`RT_PRIORITY_MAX`], required for\n`fifo`/`rr` and rejected for `normal` (both checked by\n[`crate::Manifest::validate`]).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "RtPolicy": {
+      "description": "Which OS scheduling class a node's process runs under (§11.3).\n\nSpelled in the manifest exactly as the POSIX policy names are commonly\nwritten — `normal`, `fifo`, `rr` — rather than as their `SCHED_*`\nconstants.",
+      "oneOf": [
+        {
+          "description": "`SCHED_OTHER`: the ordinary time-sharing class every process gets by\ndefault. Carries no `sched_priority` axis — see this module's docs for\nwhy a `priority` alongside it is rejected rather than ignored.",
+          "type": "string",
+          "const": "normal"
+        },
+        {
+          "description": "`SCHED_FIFO`: run until the process blocks, yields, or is pre-empted\nby a strictly higher-priority real-time thread. No timeslice.",
+          "type": "string",
+          "const": "fifo"
+        },
+        {
+          "description": "`SCHED_RR`: `SCHED_FIFO` plus a timeslice, so equal-priority real-time\nthreads round-robin against each other instead of the first one\nholding the CPU.",
+          "type": "string",
+          "const": "rr"
+        }
+      ]
+    },
+    "TypeRule": {
+      "description": "One entry of the manifest root's `type_rules: [{from, to}]` list.\n\nDeclares that an edge from an output typed `from` may feed an input\ntyped `to` without `strict_types` rejecting it. This crate stores and\nsyntax-checks the two URNs (see [`crate::Manifest::validate`]);\nresolving what a type rule actually means for edge type-checking is\n`astrs-graph`'s concern (§5.2).",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "The producer-side type URN this rule applies from.",
+          "$ref": "#/$defs/Urn"
+        },
+        "to": {
+          "description": "The consumer-side type URN this rule allows coercion to.",
+          "$ref": "#/$defs/Urn"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "Urn": {
+      "description": "A type URN, stored verbatim and validated on demand.\n\nValidation is deferred to [`Urn::validate`] rather than happening at\ndeserialize time, so a manifest with several malformed URNs gets every\none reported by [`crate::Manifest::validate`] in a single pass instead\nof failing to parse on the first.",
+      "type": "string"
+    }
+  }
+}

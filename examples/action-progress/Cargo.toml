@@ -1,0 +1,37 @@
+[package]
+name = "action-progress"
+description = "AstRS example: a long-running action goal with progress feedback over the goal_id/goal_status FSM (blueprint §9.4)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "action_progress"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "progress-client"
+path = "src/bin/progress_client.rs"
+
+[[bin]]
+name = "progress-server"
+path = "src/bin/progress_server.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+astrs-wire = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+astrs-manifest = { workspace = true }
+
+[lints]
+workspace = true

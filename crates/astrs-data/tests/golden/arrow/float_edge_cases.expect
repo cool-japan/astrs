@@ -1,0 +1,27 @@
+schema fields=3
+field 0 name=f16 type=f16 nullable=1
+field 1 name=f32 type=f32 nullable=1
+field 2 name=f64 type=f64 nullable=1
+batch 0 rows=6 cols=3
+col 0 nulls=1
+r0 h7e00
+r1 h7c00
+r2 hfc00
+r3 h8000
+r4 h0001
+r5 -
+col 1 nulls=1
+r0 s7fc00000
+r1 s7f800000
+r2 sff800000
+r3 s80000000
+r4 s00000001
+r5 -
+col 2 nulls=1
+r0 d7ff8000000000000
+r1 d7ff0000000000000
+r2 dfff0000000000000
+r3 d8000000000000000
+r4 d0000000000000001
+r5 -
+end

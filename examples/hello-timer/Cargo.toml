@@ -1,0 +1,21 @@
+[package]
+name = "hello-timer"
+description = "AstRS example: the smallest dataflow — a timer input and a log output."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "hello-timer"
+path = "src/main.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+
+[lints]
+workspace = true

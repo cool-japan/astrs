@@ -1,0 +1,55 @@
+[package]
+name = "astrs-runtime"
+description = "The AstRS operator host: shared event loop, per-operator threads and panic isolation."
+documentation = "https://docs.rs/astrs-runtime"
+readme = "README.md"
+keywords = ["astrs", "runtime", "operator", "robotics", "dataflow"]
+categories = ["science::robotics", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Both operator-loading backends are off by default: a runtime that only ever
+# hosts compiled-in `register_operator!` types (§9.3, the flagship path) must
+# not pay for a dynamic loader or a wasm interpreter it never calls.
+default = []
+# Load operators from a platform shared library via `dlopen`/`LoadLibrary`
+# (`manifest` `operators[].dylib: <path>`). FFI *declarations* to a platform
+# service; no C is compiled (blueprint §18.1).
+dylib-operators = ["dep:libloading", "astrs-operator-api/dylib"]
+# Load operators from a WebAssembly module run on the pure-Rust `wasmi`
+# interpreter (`manifest` `operators[].wasm: <path>`).
+wasm-operators = ["dep:wasmi", "dep:oxicode"]
+
+[dependencies]
+astrs-manifest = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-operator-api = { workspace = true }
+astrs-scheduler = { workspace = true }
+astrs-wire = { workspace = true }
+libloading = { workspace = true, optional = true }
+# Encodes/decodes the `wasm-operators` guest ABI's own private call/status
+# mirror (`crate::wasm`'s module docs) — a wire codec independent of
+# `astrs-operator-api`'s own `dylib` ABI, which happens to use the same
+# codec (blueprint §7.1) for an unrelated reason.
+oxicode = { workspace = true, optional = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+wasmi = { workspace = true, optional = true }
+
+[dev-dependencies]
+astrs-time = { path = "../astrs-time" }
+# Test-only: compiles `.wat` text fixtures into the `.wasm` bytes
+# `wasmi::Module::new` consumes, so wasm-operator tests read as WebAssembly
+# rather than as hex blobs. Cargo has no optional dev-dependencies, so this is
+# unconditional; it never reaches a released build.
+wat = { workspace = true }

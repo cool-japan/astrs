@@ -1,0 +1,26 @@
+# A single-node manifest fragment (blueprint §8.3's per-node schema, with no
+# `nodes:` wrapper) — what `astrs node add <dataflow> fragments/worker.yml`
+# reads (§17). Not a dataflow of its own: `tests/conformance`'s
+# `m2_example_estate.rs` walks `examples/<name>/*.yml` for a *committed
+# manifest*, and a bare node fragment is not one — which is exactly why this
+# file lives one directory deeper, in `fragments/`, rather than beside
+# `dataflow.yml`.
+#
+# `path:` here is **not** resolved the way `dataflow.yml`'s node paths are.
+# `astrs run`/`astrs up` rewrite a manifest's own `path:` entries relative to
+# that manifest's directory before anything is spawned; `astrs node add`
+# has no such manifest context; the coordinator's `expand_node_fragment`
+# reads this file's `path:` as-is and never rewrites it (see this crate's
+# `dynamic_add_remove::tests::the_fragment_expands_the_way_expand_node_fragment_would`,
+# which exercises exactly that function's own logic). So this path is
+# written relative to the **workspace root** — where the README's recipe
+# runs every command from, `astrs up`/`astrs node add` included — not
+# relative to this file.
+id: worker
+description: Reads anchor/beats once attached, and proves it was really running.
+path: ./target/debug/dynamic-worker
+build: cargo build -p dynamic-add-remove
+inputs:
+  beats: anchor/beats
+env:
+  DYNAMIC_WORKER_BUDGET: 20

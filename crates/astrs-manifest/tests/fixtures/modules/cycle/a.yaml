@@ -1,0 +1,5 @@
+module:
+  name: a
+nodes:
+  - id: to_b
+    module: ./b.yaml

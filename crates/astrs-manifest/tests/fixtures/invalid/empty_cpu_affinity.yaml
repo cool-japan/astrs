@@ -1,0 +1,4 @@
+nodes:
+  - id: pinned
+    path: ./pinned
+    cpu_affinity: []

@@ -1,0 +1,50 @@
+[package]
+name = "astrs-ros2-bridge-node"
+description = "The declarative ROS 2 bridge node for AstRS dataflows."
+documentation = "https://docs.rs/astrs-ros2-bridge-node"
+readme = "README.md"
+keywords = ["astrs", "ros2", "bridge", "robotics", "dataflow"]
+categories = ["science::robotics", "command-line-utilities"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "astrs_ros2_bridge_node"
+path = "src/lib.rs"
+
+[[bin]]
+name = "astrs-ros2-bridge-node"
+path = "src/main.rs"
+
+[dependencies]
+astrs-cdr = { workspace = true }
+astrs-data = { workspace = true }
+astrs-idl = { workspace = true }
+astrs-manifest = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-ros2 = { workspace = true }
+astrs-rtps = { workspace = true }
+# §10.6's `/tf` bridging: `tf2_msgs/msg/TFMessage` is hand-written there
+# because §10.3 leaves `tf2_msgs` out of the pre-generated bundle, and a
+# `ros2: { topic: /tf }` block has to resolve it like any other type.
+astrs-tf = { workspace = true }
+astrs-time = { workspace = true }
+astrs-wire = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The unit tests build their fixtures from the YAML a manifest actually
+# carries, rather than from a hand-built `Ros2Config` — so a change to the
+# `ros2:` schema breaks them, which is the point.
+astrs-yaml = { path = "../../crates/astrs-yaml" }
+
+[lints]
+workspace = true

@@ -1,0 +1,9 @@
+nodes:
+  - id: producer
+    path: ./producer
+    outputs: [frames]
+  - id: consumer
+    path: ./consumer
+    inputs:
+      frames: producer/frames
+    input_types: { framez: "std/media/v1/Image[pixel=rgb8]" }

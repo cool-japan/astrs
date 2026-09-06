@@ -1,0 +1,5 @@
+nodes:
+  - id: producer
+    path: ./producer
+    outputs: [out]
+    output_types: { out: "not a urn" }

@@ -1,0 +1,28 @@
+[package]
+name = "astrs-nodes-signal"
+description = "Ready-made AstRS signal-processing nodes and operators: FFT, windows, filters."
+documentation = "https://docs.rs/astrs-nodes-signal"
+readme = "README.md"
+keywords = ["astrs", "dsp", "fft", "robotics", "dataflow"]
+categories = ["science::robotics", "multimedia::audio", "mathematics"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-data = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-operator-api = { workspace = true }
+astrs-wire = { workspace = true }
+oxifft = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+astrs-time = { path = "../astrs-time" }

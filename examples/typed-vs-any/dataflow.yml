@@ -1,0 +1,55 @@
+# typed-vs-any — a typed columnar port and a raw-bytes port carrying the
+# same values, side by side (blueprint §9.1, §9.2).
+#
+#   cargo build -p typed-vs-any
+#   astrs run examples/typed-vs-any/dataflow.yml
+#
+# `path:` is relative to this file's directory (that is what `astrs run`
+# resolves node paths against), so the manifest works from any checkout
+# without an absolute path in it.
+#
+#   [source] ──typed (std/core/v1/Float64)──► [sink]
+#      │
+#      └──────raw (no type URN)─────────────► [sink]
+#
+# `typed` carries `Output<Scalar<f64>>` (`node.output::<Scalar<f64>>()`,
+# §9.1): the wire encodes a one-row Arrow `Float64` column, and the port's
+# declared URN is checked against `T` at construction (§9.2). `raw` carries
+# the identical value as eight hand-encoded little-endian bytes
+# (`RawOutput::send_bytes`) and declares no `output_types`/`input_types`
+# entry at all — `astrs validate` has nothing to check on it, on purpose.
+# Both ports are driven by the same tick, so `sink` receives the same
+# logical sequence twice, through two different encodings, and can compare
+# them directly.
+astrs: "1"
+name: typed-vs-any
+exit_when_nodes_finish: true
+
+nodes:
+  - id: source
+    description: Publishes the same deterministic sequence as a typed column and as raw bytes.
+    path: ../../target/debug/typed-any-source
+    build: cargo build -p typed-vs-any
+    inputs:
+      tick: astrs/timer/millis/10
+    outputs: [typed, raw]
+    output_types:
+      typed: "std/core/v1/Float64"
+    env:
+      TYPED_VS_ANY_SAMPLES: 200
+
+  - id: sink
+    description: Decodes both ports and asserts the two sequences agree.
+    path: ../../target/debug/typed-any-sink
+    build: cargo build -p typed-vs-any
+    inputs:
+      typed:
+        source: source/typed
+        queue_size: 64
+        queue_policy: backpressure
+      raw:
+        source: source/raw
+        queue_size: 64
+        queue_policy: backpressure
+    input_types:
+      typed: "std/core/v1/Float64"

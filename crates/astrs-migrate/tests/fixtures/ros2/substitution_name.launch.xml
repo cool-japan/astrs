@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!--
+  A node name= parameterized by an unresolved launch substitution --
+  blueprint §8.6's "never guess silently" in its sharpest form. This
+  importer carries the substitution verbatim into the manifest id rather
+  than inventing a resolved value; `astrs validate` then honestly flags
+  it as an invalid id. See tests/from_ros2.rs's
+  substitution_in_name_survives_into_id_and_fails_validation_honestly.
+-->
+<launch>
+  <node pkg="pkg_a" exec="controller" name="$(var robot_name)_controller"/>
+</launch>

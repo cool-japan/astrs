@@ -1,0 +1,13 @@
+flowchart LR
+    classDef virtual fill:#eee,stroke:#999,stroke-dasharray: 3 3;
+    subgraph m0["coordinator"]
+        n0["camera"]
+        n1["detector"]
+    end
+    subgraph m1["robot-1"]
+        n2["planner"]
+    end
+    v0(["astrs/timer/hz/50"]):::virtual
+    n0 -->|"frames: std/media/v1/Image[pixel=rgb8]"| n1
+    n1 -->|"detections"| n2
+    v0 --> n2

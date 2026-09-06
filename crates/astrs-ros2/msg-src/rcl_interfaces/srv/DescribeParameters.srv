@@ -1,0 +1,5 @@
+# A list of parameter names to describe.
+string[] names
+---
+# List of descriptors, one for each parameter requested, in the same order.
+ParameterDescriptor[] descriptors

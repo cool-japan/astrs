@@ -1,0 +1,18 @@
+# Starter manifest wiring __ASTRS_PROJECT_NAME__ into a runtime host node
+# (blueprint §9.3), scaffolded by `astrs new operator`.
+#
+# A node whose source is `operators:` has no `path:`/`build:` of its own
+# -- the daemon spawns the generic `astrs-runtime` host process for it
+# and links in every operator registered via `register_operator!`
+# (blueprint §5.2's `astrs-runtime`: "Operator host: shared event loop").
+# Make sure this operator crate is a build dependency of whatever
+# `astrs-runtime` binary your daemon actually runs before `astrs run`.
+nodes:
+  - id: runtime-host
+    operators:
+      - id: __ASTRS_PROJECT_NAME__
+        operator: __ASTRS_PROJECT_TYPE__
+        inputs:
+          tick: astrs/timer/secs/1
+        outputs:
+          - status

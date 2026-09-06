@@ -1,0 +1,15 @@
+schema fields=2
+field 0 name=xyz type=fsl(item:f32:0,3) nullable=1
+field 1 name=mat type=fsl(item:fsl(item:u8:0,2):0,2) nullable=0
+batch 0 rows=4 cols=2
+col 0 nulls=1
+r0 [s3f800000 s40000000 s40400000]
+r1 [s40800000 s40a00000 s40c00000]
+r2 -
+r3 [s41200000 s41300000 s41400000]
+col 1 nulls=0
+r0 [[0 1] [2 3]]
+r1 [[4 5] [6 7]]
+r2 [[8 9] [10 11]]
+r3 [[12 13] [14 15]]
+end

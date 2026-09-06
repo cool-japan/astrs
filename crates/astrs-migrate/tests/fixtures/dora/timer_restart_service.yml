@@ -1,0 +1,28 @@
+# The required combined fixture: a timer virtual input, a restart policy
+# (with the `on-failure` hyphen spelling this importer must rewrite), and a
+# service request/response pair -- shaped after the reference checkout's
+# examples/service-example/dataflow.yml, with restart fields layered on.
+nodes:
+  - id: service-client
+    build: cargo build -p service-example-client
+    path: ../../target/debug/service-example-client
+    pattern: service-client
+    inputs:
+      tick: dora/timer/millis/500
+      response: service-server/response
+    outputs:
+      - request
+    restart_policy: on-failure
+    max_restarts: 3
+    restart_delay: 0.5
+
+  - id: service-server
+    build: cargo build -p service-example-server
+    path: ../../target/debug/service-example-server
+    pattern: service-server
+    inputs:
+      request: service-client/request
+    outputs:
+      - response
+    restart_policy: always
+    health_check_timeout: 2.0

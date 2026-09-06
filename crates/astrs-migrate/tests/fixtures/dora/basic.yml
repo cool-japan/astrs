@@ -1,0 +1,18 @@
+# A minimal, representative dora dataflow: a timer-driven source feeding a
+# sink, in the shape every real dora example in the reference checkout
+# (examples/python-echo, examples/rust-dataflow-git, ...) actually uses.
+nodes:
+  - id: camera
+    path: ./target/release/camera-node
+    build: cargo build --release -p camera-node
+    inputs:
+      tick: dora/timer/millis/100
+    outputs:
+      - frames
+    env:
+      CAMERA_INDEX: 0
+
+  - id: recorder
+    path: ./target/release/recorder-node
+    inputs:
+      frames: camera/frames

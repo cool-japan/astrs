@@ -1,0 +1,42 @@
+# ros2-native-listener — an AstRS node using astrs-ros2's `Ros2Node`
+# directly, no `ros2:` declarative bridge sugar (blueprint §10.4, §5.4).
+#
+#   cargo build -p ros2-native-listener
+#   astrs run examples/ros2-native-listener/dataflow.yml
+#
+# `path:` is relative to this file's directory, as every other example's is
+# — see hello-timer's own manifest comment for why.
+#
+# Neither node declares any `inputs:`/`outputs:`: both are ordinary AstRS
+# processes (registered, logged, health-checked and stopped exactly like
+# any other node in this estate), but the two talk to *each other* over
+# real DDS/RTPS on loopback — `astrs-ros2`'s `Ros2Node` used straight from
+# node code, the way §10.4 describes it, with no bridge process and no
+# `ros2:` block in between. Contrast `ros2-talker-bridge`, which crosses
+# the same kind of boundary declaratively.
+#
+# Both participants join the same, deliberately non-default DDS domain
+# (`ros2_native_listener::DOMAIN_ID`) so this pair does not collide with a
+# real ROS 2 stack that happens to be running on the same host, and rely on
+# the standard SPDP multicast join to find each other — the same mechanism
+# a real ROS 2 deployment on one host depends on. See the README for what
+# to do if your network sandbox refuses that join.
+astrs: "1"
+name: ros2-native-listener
+health_check_interval: 5.0
+exit_when_nodes_finish: true
+
+nodes:
+  - id: talker
+    description: Publishes std_msgs/msg/String on /chatter via a self-hosted Ros2Node.
+    path: ../../target/debug/native-talker
+    build: cargo build -p ros2-native-listener
+    env:
+      NATIVE_TALKER_MESSAGES: 15
+
+  - id: listener
+    description: Subscribes to /chatter via a self-hosted Ros2Node and tallies what arrives.
+    path: ../../target/debug/native-listener
+    build: cargo build -p ros2-native-listener
+    env:
+      NATIVE_LISTENER_MESSAGES: 15

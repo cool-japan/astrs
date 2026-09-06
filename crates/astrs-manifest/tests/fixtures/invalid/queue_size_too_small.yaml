@@ -1,0 +1,10 @@
+nodes:
+  - id: producer
+    path: ./producer
+    outputs: [out]
+  - id: consumer
+    path: ./consumer
+    inputs:
+      data:
+        source: producer/out
+        queue_size: 0

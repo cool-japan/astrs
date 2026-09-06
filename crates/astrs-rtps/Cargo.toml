@@ -1,0 +1,43 @@
+[package]
+name = "astrs-rtps"
+description = "A from-scratch RTPS 2.3 stack on tokio UDP: discovery, reliability, QoS and fragmentation."
+documentation = "https://docs.rs/astrs-rtps"
+readme = "README.md"
+keywords = ["astrs", "rtps", "dds", "ros2", "robotics"]
+categories = ["science::robotics", "network-programming"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-cdr = { workspace = true }
+# Never called: forces blake3's `pure` (Rust-only) feature onto the copy that
+# oxicrypto pulls in, so no C SIMD kernel is ever compiled even when this
+# crate is built on its own (blueprint §18.1). Same note as `astrs-wire`.
+blake3 = { workspace = true }
+# The only source of cryptography in this crate: AES-GCM/GMAC, HKDF-SHA-256,
+# the CSPRNG and constant-time comparison behind `security` (blueprint §22).
+# No primitive is implemented here and no other crypto crate is permitted.
+oxicrypto = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+# The §20.4 latency-ladder bench estate (blueprint §20.4, §5.2).
+criterion = { workspace = true }
+
+[[bench]]
+name = "loopback_pubsub"
+harness = false
+# See `astrs-shm/Cargo.toml`'s identical note: keeps `cargo test`/nextest
+# from also building and running the bench.
+test = false

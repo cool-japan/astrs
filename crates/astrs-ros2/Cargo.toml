@@ -1,0 +1,32 @@
+[package]
+name = "astrs-ros2"
+description = "An rcl-level ROS 2 client library in pure Rust: nodes, topics, services, actions, parameters."
+documentation = "https://docs.rs/astrs-ros2"
+readme = "README.md"
+keywords = ["astrs", "ros2", "robotics", "dds", "middleware"]
+categories = ["science::robotics", "network-programming", "api-bindings"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-cdr = { workspace = true }
+astrs-data = { workspace = true }
+astrs-idl = { workspace = true }
+astrs-manifest = { workspace = true }
+astrs-rtps = { workspace = true }
+astrs-time = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+heck = { workspace = true }
+proptest = { workspace = true }

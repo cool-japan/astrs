@@ -1,0 +1,50 @@
+[package]
+name = "astrs-sim"
+description = "A deterministic fixed-step simulation harness driving AstRS dataflows."
+documentation = "https://docs.rs/astrs-sim"
+readme = "README.md"
+keywords = ["astrs", "simulation", "robotics", "dataflow", "urdf"]
+categories = ["science::robotics", "simulation", "mathematics"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "astrs_sim"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard (examples/tf-broadcast/Cargo.toml
+# carries the identical comment). These three are namespaced with an
+# `astrs-sim-` prefix specifically so they cannot collide with any of the
+# example estate's own binaries.
+[[bin]]
+name = "astrs-sim-node"
+path = "src/bin/astrs_sim_node.rs"
+
+[[bin]]
+name = "astrs-sim-teleop"
+path = "src/bin/astrs_sim_teleop.rs"
+
+[[bin]]
+name = "astrs-sim-logger"
+path = "src/bin/astrs_sim_logger.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-data = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-tf = { workspace = true }
+astrs-urdf = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+astrs-manifest = { path = "../astrs-manifest" }

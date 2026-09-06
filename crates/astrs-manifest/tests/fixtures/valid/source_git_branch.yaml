@@ -1,0 +1,4 @@
+nodes:
+  - id: from-branch
+    git: https://example.com/repo.git
+    branch: main

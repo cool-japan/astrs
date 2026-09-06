@@ -1,0 +1,49 @@
+# module-composition — two operator modules composed into one runtime
+# process (blueprint §9.3).
+#
+#   cargo build -p module-composition
+#   astrs run examples/module-composition/dataflow.yml
+#
+# `path:` is relative to this file's directory (that is what `astrs run`
+# resolves node paths against), so the manifest works from any checkout
+# without an absolute path in it.
+#
+#   astrs/timer/millis/20 ──► tick ──► [compose] ──result──► [collector]
+#                                        │  ScaleOperator ──out──► OffsetOperator │
+#                                        └── one runtime process, one thread each ┘
+#
+# `compose` is an ordinary `path:` node, **not** a manifest `operators:`
+# node (§8.3) — see this crate's own docs for why: the daemon spawns a
+# fixed `astrs-runtime` binary for an `operators:` node and only tells it
+# each operator's id/registry name, not the per-operator `inputs`/`outputs`
+# wiring `astrs_manifest::OperatorConfig` carries (`crates/astrs-runtime`'s
+# own generic binary documents this as a known gap). `compose-host` builds
+# that fuller `RuntimeConfig` itself, in Rust, and hosts it directly — the
+# graph still shows one node with one external input and one external
+# output, because that is exactly what a caller outside this process sees;
+# what happens *inside* `compose` — two operators, one thread each, wired
+# to each other with no IPC hop between them — is this example's claim.
+astrs: "1"
+name: module-composition
+exit_when_nodes_finish: true
+
+nodes:
+  - id: compose
+    description: Hosts ScaleOperator and OffsetOperator, composed, in one runtime process.
+    path: ../../target/debug/compose-host
+    build: cargo build -p module-composition
+    inputs:
+      tick: astrs/timer/millis/20
+    outputs: [result]
+    env:
+      MODULE_COMPOSITION_TICKS: 40
+
+  - id: collector
+    description: Verifies the composed arithmetic on every published result.
+    path: ../../target/debug/compose-collector
+    build: cargo build -p module-composition
+    inputs:
+      result:
+        source: compose/result
+        queue_size: 64
+        queue_policy: backpressure

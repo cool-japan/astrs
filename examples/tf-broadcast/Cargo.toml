@@ -1,0 +1,38 @@
+[package]
+name = "tf-broadcast"
+description = "AstRS example: broadcasting transforms and an interpolated time-travel lookup via astrs-tf (blueprint §10.6)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "tf_broadcast"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "tf-broadcaster"
+path = "src/bin/tf_broadcaster.rs"
+
+[[bin]]
+name = "tf-consumer"
+path = "src/bin/tf_consumer.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+astrs-tf = { workspace = true }
+astrs-time = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+astrs-manifest = { workspace = true }
+
+[lints]
+workspace = true

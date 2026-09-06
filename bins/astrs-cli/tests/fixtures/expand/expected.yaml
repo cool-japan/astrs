@@ -1,0 +1,20 @@
+name: expand-golden-demo
+nodes:
+- id: camera
+  path: ./camera
+  outputs:
+  - frames
+  output_types:
+    frames: std/media/v1/Image
+- id: perception.detector
+  path: ./detector
+  inputs:
+    frames: camera/frames
+  outputs:
+  - detections
+  output_types:
+    detections: std/vision/v1/Detections
+- id: planner
+  path: ./planner
+  inputs:
+    detections: perception.detector/detections

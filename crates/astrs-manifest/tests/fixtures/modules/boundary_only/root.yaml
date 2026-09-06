@@ -1,0 +1,15 @@
+nodes:
+  - id: source
+    path: ./source
+    outputs: [data]
+
+  - id: passthrough
+    module: ./passthrough.yaml
+    inputs:
+      data: source/data
+    outputs: [data]
+
+  - id: sink
+    path: ./sink
+    inputs:
+      data: passthrough/data

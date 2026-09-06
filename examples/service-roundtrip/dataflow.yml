@@ -1,0 +1,41 @@
+# service-roundtrip — request/response over ordinary edges (blueprint §9.4).
+#
+#   cargo build -p service-roundtrip
+#   astrs run examples/service-roundtrip/dataflow.yml
+#
+# `pattern:` declares the two roles. `astrs validate` uses them to check the
+# pair is wired in both directions, and the scheduler uses them to give
+# correlated messages queue-eviction immunity (§11.2).
+astrs: "1"
+name: service-roundtrip
+exit_when_nodes_finish: true
+
+nodes:
+  - id: client
+    description: Issues one call per tick and checks every answer.
+    path: ../../target/debug/service-client
+    build: cargo build -p service-roundtrip
+    pattern: service-client
+    inputs:
+      tick: astrs/timer/millis/50
+      response: server/response
+    input_types:
+      response: "std/core/v1/Int64"
+    outputs: [request]
+    output_types:
+      request: "std/core/v1/Int64"
+    env:
+      SERVICE_CALLS: 8
+
+  - id: server
+    description: Squares every number it is asked about.
+    path: ../../target/debug/service-server
+    build: cargo build -p service-roundtrip
+    pattern: service-server
+    inputs:
+      request: client/request
+    input_types:
+      request: "std/core/v1/Int64"
+    outputs: [response]
+    output_types:
+      response: "std/core/v1/Int64"

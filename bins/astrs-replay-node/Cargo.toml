@@ -1,0 +1,36 @@
+[package]
+name = "astrs-replay-node"
+description = "The AstRS replay node: re-injects recorded .arec outputs into a dataflow."
+documentation = "https://docs.rs/astrs-replay-node"
+readme = "README.md"
+keywords = ["astrs", "replay", "robotics", "dataflow", "arec"]
+categories = ["science::robotics", "command-line-utilities"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "astrs_replay_node"
+path = "src/lib.rs"
+
+[[bin]]
+name = "astrs-replay-node"
+path = "src/main.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+astrs-recording = { workspace = true }
+astrs-time = { workspace = true }
+astrs-wire = { workspace = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+astrs-record-node = { path = "../astrs-record-node" }
+
+[lints]
+workspace = true

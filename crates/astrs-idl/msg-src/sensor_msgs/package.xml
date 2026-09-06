@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>sensor_msgs</name>
+  <version>4.8.0</version>
+  <description>Messages for commonly used sensors.</description>
+  <maintainer email="ros2-team@example.com">ROS 2 team</maintainer>
+  <license>Apache-2.0</license>
+  <depend>builtin_interfaces</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+</package>

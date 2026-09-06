@@ -1,0 +1,55 @@
+# benchmark-latency — closed-loop round-trip latency across the local plane
+# (blueprint §20.4's "same-host small message RTT" row).
+#
+#   cargo build -p benchmark-latency
+#   astrs run examples/benchmark-latency/dataflow.yml
+#
+# `path:` is relative to this file's directory (that is what `astrs run`
+# resolves node paths against), so the manifest works from any checkout
+# without an absolute path in it.
+#
+#   [prober] ──ping──► [reflector]
+#      ▲                    │
+#      └───────pong─────────┘
+#
+# `prober` is *closed-loop*: it holds exactly one round trip in flight, timing
+# it with its own `Instant` clock (never comparing timestamps minted by two
+# different processes — see the crate docs for why), and only sends the next
+# `ping` once the matching `pong` returns. An open-loop design (send on a
+# fixed timer regardless of whether the last reply arrived) would let queueing
+# delay leak into what is supposed to be a single hop's latency, which is
+# exactly what this example does not want to measure. Neither port carries a
+# type URN: an 8-byte sequence number stands in for a "small message" payload,
+# and the claim under test is about the wire, not the encoding (the same
+# stance `record-replay` takes for its `frames` edge, for the same reason).
+#
+# `pattern:` labels the ping/pong round trip as the request/response pair it
+# already is (blueprint §9.4, same mechanism `service-roundtrip` uses):
+# `astrs validate`'s graph analysis derives the client→server / server→client
+# correlation from these labels plus the wiring below, and treats the cycle
+# they form as the expected request/response loop rather than an uncorrelated
+# — and therefore flagged — one.
+astrs: "1"
+name: benchmark-latency
+exit_when_nodes_finish: true
+
+nodes:
+  - id: prober
+    description: Times one closed-loop round trip per sample, then reports p50/p90/p99.
+    path: ../../target/debug/latency-prober
+    build: cargo build -p benchmark-latency
+    pattern: service-client
+    inputs:
+      pong: reflector/pong
+    outputs: [ping]
+    env:
+      BENCHMARK_LATENCY_SAMPLES: 300
+
+  - id: reflector
+    description: Echoes every `ping` payload back unchanged, as fast as it arrives.
+    path: ../../target/debug/latency-reflector
+    build: cargo build -p benchmark-latency
+    pattern: service-server
+    inputs:
+      ping: prober/ping
+    outputs: [pong]

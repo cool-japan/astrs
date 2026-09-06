@@ -1,0 +1,36 @@
+[package]
+name = "typed-vs-any"
+description = "AstRS example: a typed columnar port and a raw-bytes port carrying the same values side by side (blueprint §9.1, §9.2)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "typed_vs_any"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "typed-any-source"
+path = "src/bin/typed_any_source.rs"
+
+[[bin]]
+name = "typed-any-sink"
+path = "src/bin/typed_any_sink.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+astrs-manifest = { workspace = true }
+
+[lints]
+workspace = true

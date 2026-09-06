@@ -1,0 +1,18 @@
+schema fields=3
+field 0 name=i type=i32 nullable=1
+field 1 name=s type=utf8 nullable=1
+field 2 name=l type=list(item:i32:1) nullable=1
+batch 0 rows=3 cols=3
+col 0 nulls=1
+r0 -
+r1 3
+r2 4
+col 1 nulls=1
+r0 -
+r1 u7468726565
+r2 u666f7572
+col 2 nulls=0
+r0 []
+r1 [4 5 6]
+r2 []
+end

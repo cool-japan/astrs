@@ -1,0 +1,39 @@
+# restart-policies — a flaky node recovering inside its budget (§12).
+#
+#   cargo build -p restart-policies
+#   astrs run examples/restart-policies/dataflow.yml
+#
+# The worker fails its first two incarnations and works on the third. With
+# `max_restarts: 5` the supervisor has budget to spare, so the run finishes
+# clean and `$RESTART_LOG` holds exactly three lines — one per *start*.
+#
+#   start 1  fail ─┐
+#   start 2  fail ─┼─ backoff: restart_delay × 2ⁿ, capped by max_restart_delay
+#   start 3  work ─┘
+#
+# The companion manifest `budget-exhausted.yml` is the same node with a
+# smaller budget and a worker told to fail every time: the other half of §12's
+# sentence, where the supervisor stops trying.
+astrs: "1"
+name: restart-policies
+exit_when_nodes_finish: true
+
+nodes:
+  - id: worker
+    description: Fails twice on purpose, then runs to completion.
+    path: ../../target/debug/restart-worker
+    build: cargo build -p restart-policies
+    inputs:
+      tick: astrs/timer/millis/20
+    # §12: worth restarting a few times, not forever. `never` would end the
+    # run at the first failure; `always` would restart it even after it
+    # succeeded, and this graph would never finish.
+    restart_policy: on_failure
+    max_restarts: 5
+    # Small on purpose: the ladder is `restart_delay × 2ⁿ`, so a default-sized
+    # delay would make an example that demonstrates *counting* take seconds to
+    # demonstrate it. Nothing here asserts on elapsed time.
+    restart_delay: 0.02
+    max_restart_delay: 0.1
+    env:
+      RESTART_FAILURES: 2

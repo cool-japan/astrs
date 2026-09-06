@@ -1,0 +1,21 @@
+[package]
+name = "xtask"
+description = "Repository automation for AstRS: schema emit, protocol snapshots, layer lint and release preflight."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+astrs-manifest = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+schema fields=2
+field 0 name=i type=i32 nullable=1
+field 1 name=s type=utf8 nullable=1
+batch 0 rows=3 cols=2
+col 0 nulls=1
+r0 1
+r1 -
+r2 3
+col 1 nulls=1
+r0 u6161
+r1 u626262
+r2 -
+end

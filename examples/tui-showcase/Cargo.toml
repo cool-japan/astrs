@@ -1,0 +1,40 @@
+[package]
+name = "tui-showcase"
+description = "AstRS example: astrs-tui rendering driven against a scripted cluster snapshot, verified with TestBackend goldens (blueprint §13, §17)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "tui_showcase"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "showcase-camera"
+path = "src/bin/showcase_camera.rs"
+
+[[bin]]
+name = "showcase-detector"
+path = "src/bin/showcase_detector.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+
+[dev-dependencies]
+astrs-graph = { workspace = true }
+astrs-manifest = { workspace = true }
+astrs-time = { workspace = true }
+astrs-tui = { workspace = true }
+astrs-wire = { workspace = true }
+crossterm = { workspace = true }
+ratatui = { workspace = true }
+
+[lints]
+workspace = true

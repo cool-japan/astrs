@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<!--
+  A single node with every "mechanical mapping" construct astrs.md §8.6
+  names for from-ros2: pkg/exec/name/namespace, a remap, a scalar param,
+  an <env>, and shell-tokenized args. Deliberately carries nothing this
+  importer cannot map, so the only note produced is the always-present
+  bridge scaffold note (message_type/direction are never inferable) --
+  see tests/from_ros2.rs's golden-file test.
+-->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker" namespace="chatter_demo"
+        args="--ros-args -p use_sim_time:=true">
+    <remap from="chatter" to="/chatter"/>
+    <param name="rate" value="10"/>
+    <env name="TALKER_LOG_LEVEL" value="debug"/>
+  </node>
+</launch>

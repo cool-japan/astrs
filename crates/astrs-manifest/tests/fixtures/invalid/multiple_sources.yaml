@@ -1,0 +1,4 @@
+nodes:
+  - id: confused
+    path: ./confused
+    module: ./some-module.yaml

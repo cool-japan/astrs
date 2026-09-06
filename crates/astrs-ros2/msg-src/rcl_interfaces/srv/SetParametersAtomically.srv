@@ -1,0 +1,5 @@
+# A list of parameters to set atomically: either all of them are set, or none.
+Parameter[] parameters
+---
+# Indicates whether setting all of the parameters succeeded or not.
+SetParametersResult result

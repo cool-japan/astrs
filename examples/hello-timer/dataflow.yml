@@ -1,0 +1,24 @@
+# hello-timer — one node, one virtual input, no producers (blueprint §5.4).
+#
+#   cargo build -p hello-timer
+#   astrs run examples/hello-timer/dataflow.yml
+#
+# `path:` is relative to this file's directory: `astrs run` resolves node
+# paths against the manifest's own directory unless `--working-dir` says
+# otherwise, so the manifest carries no absolute path and works in any
+# checkout.
+astrs: "1"
+name: hello-timer
+exit_when_nodes_finish: true
+
+nodes:
+  - id: greeter
+    description: Logs one line per timer tick, then finishes.
+    path: ../../target/debug/hello-timer
+    build: cargo build -p hello-timer
+    inputs:
+      # A virtual source (§8.4): the daemon's timer wheel drives it, and the
+      # node sees an ordinary input event five times a second.
+      tick: astrs/timer/millis/200
+    env:
+      HELLO_TIMER_TICKS: 10

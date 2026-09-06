@@ -1,0 +1,35 @@
+[package]
+name = "astrs-scheduler"
+description = "Input queues, hierarchical timer wheel, deadline monitor and priority lanes for AstRS."
+documentation = "https://docs.rs/astrs-scheduler"
+readme = "README.md"
+keywords = ["astrs", "scheduler", "realtime", "robotics", "queues"]
+categories = ["science::robotics", "concurrency", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-time = { workspace = true }
+astrs-wire = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+# The §20.4 latency-ladder bench estate (blueprint §20.4, §5.2).
+criterion = { workspace = true }
+
+[[bench]]
+name = "timer_jitter"
+harness = false
+# See `astrs-shm/Cargo.toml`'s identical note: keeps `cargo test`/nextest
+# from also building and running the bench.
+test = false

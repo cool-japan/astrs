@@ -1,0 +1,40 @@
+[package]
+name = "module-composition"
+description = "AstRS example: two operator modules composed into one runtime process (blueprint §9.3)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "module_composition"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "compose-host"
+path = "src/bin/compose_host.rs"
+
+[[bin]]
+name = "compose-collector"
+path = "src/bin/compose_collector.rs"
+
+[dependencies]
+astrs-manifest = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-operator-api = { workspace = true }
+astrs-runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+astrs-time = { workspace = true }
+astrs-wire = { workspace = true }
+
+[lints]
+workspace = true

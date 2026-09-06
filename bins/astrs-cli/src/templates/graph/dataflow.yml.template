@@ -1,0 +1,17 @@
+# __ASTRS_PROJECT_NAME__ -- a starter dataflow graph, scaffolded by
+# `astrs new graph`. Point each node's `path:`/`build:` at a real node
+# (see `astrs new node`), rewire `inputs:` to match, then:
+#   astrs validate __ASTRS_PROJECT_NAME__.astrs.yml
+#   astrs graph __ASTRS_PROJECT_NAME__.astrs.yml
+name: __ASTRS_PROJECT_NAME__
+
+nodes:
+  - id: source
+    path: ./target/release/source
+    outputs:
+      - data
+
+  - id: sink
+    path: ./target/release/sink
+    inputs:
+      data: source/data

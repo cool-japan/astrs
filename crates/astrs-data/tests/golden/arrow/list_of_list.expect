@@ -1,0 +1,8 @@
+schema fields=1
+field 0 name=ll type=list(item:list(item:i64:0):1) nullable=1
+batch 0 rows=3 cols=1
+col 0 nulls=1
+r0 [[1 2 3]]
+r1 [[] [4 5] [6 7]]
+r2 -
+end

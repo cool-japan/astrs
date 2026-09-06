@@ -1,0 +1,40 @@
+[package]
+name = "rosbag-reader"
+description = "AstRS example: reading a rosbag2 .db3 via astrs-rosbag and feeding it into a pipeline (blueprint §10.6)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "rosbag_reader"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "bag-feeder"
+path = "src/bin/bag_feeder.rs"
+
+[[bin]]
+name = "bag-sink"
+path = "src/bin/bag_sink.rs"
+
+[dependencies]
+astrs-cdr = { workspace = true }
+astrs-data = { workspace = true }
+astrs-idl = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-rosbag = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+astrs-manifest = { workspace = true }
+
+[lints]
+workspace = true

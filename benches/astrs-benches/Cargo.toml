@@ -1,0 +1,28 @@
+[package]
+name = "astrs-benches"
+description = "The §20.4 cold-start latency gate: astrs run's real-process startup time on a generated graph."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# The §20.4 latency-ladder bench estate (blueprint §20.4, §5.2).
+criterion = { workspace = true }
+
+[[bench]]
+name = "cold_start"
+harness = false
+# See `crates/astrs-shm/Cargo.toml`'s identical note: keeps `cargo
+# test`/nextest from also building and *running* the bench — load-bearing
+# here specifically, since this bench's own setup runs `cargo build` as a
+# child process (see the bench file header for why that is safe only when
+# it is not itself nested inside another cargo invocation's target-dir lock).
+test = false

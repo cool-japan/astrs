@@ -1,0 +1,5 @@
+module:
+  name: b
+nodes:
+  - id: back_to_a
+    module: ./a.yaml

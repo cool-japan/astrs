@@ -1,0 +1,17 @@
+digraph astrs {
+    rankdir=LR;
+    node [shape=box];
+    subgraph cluster_m0 {
+        label="coordinator";
+        "n0" [label="camera"];
+        "n1" [label="detector"];
+    }
+    subgraph cluster_m1 {
+        label="robot-1";
+        "n2" [label="planner"];
+    }
+    "v0" [label="astrs/timer/hz/50", shape=ellipse, style=dashed];
+    "n0" -> "n1" [label="frames: std/media/v1/Image[pixel=rgb8]"];
+    "n1" -> "n2" [label="detections"];
+    "v0" -> "n2";
+}

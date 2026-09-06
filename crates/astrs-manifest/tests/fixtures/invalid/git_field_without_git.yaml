@@ -1,0 +1,4 @@
+nodes:
+  - id: orphan-tag
+    path: ./orphan
+    tag: v1.0.0

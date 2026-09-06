@@ -1,0 +1,26 @@
+[package]
+name = "astrs-time"
+description = "Hybrid logical clock, monotonic and wall clocks, deadlines and Stamped<T> for AstRS."
+documentation = "https://docs.rs/astrs-time"
+readme = "README.md"
+keywords = ["astrs", "robotics", "clock", "hlc", "timestamp"]
+categories = ["science::robotics", "date-and-time"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oxicode = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+serde_json = { workspace = true }

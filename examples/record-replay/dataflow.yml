@@ -1,0 +1,69 @@
+# record-replay (live) — the graph that produces the .arec session (§14).
+#
+#   cargo build -p record-replay
+#   astrs run examples/record-replay/dataflow.yml
+#
+# Writes `$RECORD_REPLAY_SESSION` (default: a file under the system temporary
+# directory). Replay that session into `replay.yml` to get the second half of
+# the pair — see this example's README.
+#
+#   sensor ──frames──► detector ──detections──┐
+#        └──frames─────────────────────────────┴──► recorder ──► session.arec
+#
+# Every edge here is deliberately **lossless**: deep queues and
+# `queue_policy: backpressure`, so a slow consumer stalls its producer instead
+# of dropping a message (§11.2). A recording made over a lossy edge would be a
+# record of what survived, not of what was published, and the byte-for-byte
+# claim in §14 would be untestable.
+#
+# The `frames` edge carries **raw bytes and no type URN**, which is the one
+# place this estate departs from "typed by default" (§3.7) on purpose: the
+# claim under test is about bytes, and a typed edge would leave room to argue
+# that a mismatch was an encoding detail. The payloads are self-describing
+# instead — the first eight bytes of each are its frame index.
+astrs: "1"
+name: record-replay
+exit_when_nodes_finish: true
+
+nodes:
+  - id: sensor
+    description: Publishes one deterministic 64-byte payload per tick.
+    path: ../../target/debug/arec-sensor
+    build: cargo build -p record-replay
+    inputs:
+      tick: astrs/timer/millis/20
+    outputs: [frames]
+    env:
+      RECORD_REPLAY_FRAMES: 12
+
+  - id: detector
+    description: Turns each frame into a detection payload.
+    path: ../../target/debug/arec-detector
+    build: cargo build -p record-replay
+    inputs:
+      frames:
+        source: sensor/frames
+        queue_size: 64
+        queue_policy: backpressure
+    outputs: [detections]
+
+  - id: recorder
+    description: Streams both edges into an .arec session.
+    # §8.1 writes a recorder as `record: [sensor/frames,
+    # detector/detections]`, one line of sugar that lowers to the shipped
+    # `astrs-record-node` binary — looked up on PATH, with its destination
+    # baked into the sugar. This example uses an ordinary `path:` node over
+    # the same `astrs-recording` API instead, so it runs straight out of a
+    # `cargo build` and writes its session outside the checkout. The file is
+    # an ordinary `.arec` either way; `astrs replay --into` cannot tell.
+    path: ../../target/debug/arec-writer
+    build: cargo build -p record-replay
+    inputs:
+      frames:
+        source: sensor/frames
+        queue_size: 64
+        queue_policy: backpressure
+      detections:
+        source: detector/detections
+        queue_size: 64
+        queue_policy: backpressure

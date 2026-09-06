@@ -1,0 +1,34 @@
+[package]
+name = "astrs-operator-api"
+description = "The AstRS operator trait and event/output shims for in-process dataflow stages."
+documentation = "https://docs.rs/astrs-operator-api"
+readme = "README.md"
+keywords = ["astrs", "operator", "api", "robotics", "dataflow"]
+categories = ["science::robotics", "api-bindings"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+# Off by default: a build that only ever hosts compiled-in
+# `register_operator!` types must not carry the ABI plumbing (and its
+# `oxicode` dependency) a dylib-exported operator needs. See `src/dylib`'s
+# module docs.
+dylib = ["dep:oxicode"]
+
+[dependencies]
+astrs-data = { workspace = true }
+astrs-operator-macros = { workspace = true }
+astrs-wire = { workspace = true }
+oxicode = { workspace = true, optional = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+astrs-time = { path = "../astrs-time" }
+
+[lints]
+workspace = true

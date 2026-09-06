@@ -1,0 +1,49 @@
+# error-propagation — a failing node's NodeFailed reaching its peers (§12).
+#
+#   cargo build -p error-propagation
+#   astrs run examples/error-propagation/dataflow.yml   # exits non-zero
+#
+#   astrs/timer/millis/20 ──► [source] ──readings──► [watcher] ──► report.json
+#                                 └── exit 23 ──► NodeFailed ──►     ▲
+#                             astrs/status ────────────────────────────┘
+#
+# A non-zero exit is the point of this file, not a defect: `astrs run` exits
+# with the dataflow's severity (§17), and this graph's source fails on
+# purpose. What the example demonstrates is what the *other* node saw — a
+# typed cause delivered as an ordinary event, which it writes to
+# `$FAULT_REPORT`.
+astrs: "1"
+name: error-propagation
+exit_when_nodes_finish: true
+
+nodes:
+  - id: source
+    description: Publishes three readings, then exits 23 without closing.
+    path: ../../target/debug/fault-source
+    build: cargo build -p error-propagation
+    inputs:
+      tick: astrs/timer/millis/20
+    outputs: [readings]
+    # `never`, deliberately: a restarted producer sends `Restarted` to its
+    # peers instead, which is `restart-policies`' story rather than this one.
+    restart_policy: never
+    env:
+      FAULT_READINGS: 3
+
+  - id: watcher
+    description: Records every reading and every lifecycle event it was told.
+    path: ../../target/debug/fault-watcher
+    build: cargo build -p error-propagation
+    inputs:
+      readings:
+        source: source/readings
+        # Lossless: a dropped reading would make the report understate what
+        # arrived before the failure, and blame the wrong thing (§11.2).
+        queue_size: 32
+        queue_policy: backpressure
+      # §8.4's reserved lifecycle stream. Declaring it is how a
+      # supervisor-shaped node says it reacts to its peers — `astrs validate`
+      # sees it and `astrs graph` draws it. The daemon serves `NodeFailed`
+      # from the supervisor directly, so the node's arm fires either way; the
+      # manifest states the intent rather than relying on that.
+      status: astrs/status

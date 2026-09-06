@@ -1,0 +1,46 @@
+# Dora 1.0 modern spelling throughout: `deploy:`/`debug:`, no `_unstable_`
+# prefix (dropped for 1.0 by dora-rs/dora#3220). The `nodes:` section below
+# is `~/work/refs/dora/examples/multiple-daemons/dataflow.yml`, with one
+# adjustment: `rust-sink` no longer consumes `runtime-node`'s operator
+# output (dora addresses it as `runtime-node/rust-operator/status`, a
+# node/operator/output scheme `astrs-manifest::validate` deliberately never
+# resolves cross-node -- see its module docs' "Deliberately not checked" --
+# a separate, pre-existing gap this fixture is not about). The root
+# `deploy:`/`debug:` block is added on top, since no shipped dora example
+# happens to use either at the root; that is the one shape no real example
+# exercises.
+deploy:
+  machine: coordinator-1
+debug:
+  enable_debug_inspection: true
+nodes:
+  - id: rust-node
+    deploy:
+      machine: A
+    build: cargo build -p multiple-daemons-example-node
+    path: ../../target/debug/multiple-daemons-example-node
+    inputs:
+      tick: dora/timer/millis/10
+    outputs:
+      - random
+
+  - id: runtime-node
+    deploy:
+      machine: A
+    operators:
+      - id: rust-operator
+        build: cargo build -p multiple-daemons-example-operator
+        shared-library: ../../target/debug/multiple_daemons_example_operator
+        inputs:
+          tick: dora/timer/millis/100
+          random: rust-node/random
+        outputs:
+          - status
+
+  - id: rust-sink
+    deploy:
+      machine: B
+    build: cargo build -p multiple-daemons-example-sink
+    path: ../../target/debug/multiple-daemons-example-sink
+    inputs:
+      random: rust-node/random

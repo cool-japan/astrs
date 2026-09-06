@@ -1,0 +1,32 @@
+[package]
+name = "astrs-nodes-vision"
+description = "Ready-made AstRS vision nodes and operators: image codecs, resize, colour conversion."
+documentation = "https://docs.rs/astrs-nodes-vision"
+readme = "README.md"
+keywords = ["astrs", "vision", "image", "robotics", "dataflow"]
+categories = ["science::robotics", "multimedia::images", "computer-vision"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-data = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-operator-api = { workspace = true }
+astrs-wire = { workspace = true }
+# Pure-Rust DEFLATE (RFC 1951), the COOLJAPAN replacement for `flate2`/
+# `miniz_oxide` (both banned in deny.toml): PNG's `IDAT` compression, and the
+# `image/png` leg of this crate's codec stage, run on this.
+oxiarc-deflate = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+astrs-time = { path = "../astrs-time" }
+proptest = { workspace = true }

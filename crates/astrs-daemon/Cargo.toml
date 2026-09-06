@@ -1,0 +1,56 @@
+[package]
+name = "astrs-daemon"
+description = "The per-machine AstRS daemon: node supervision, SHM broker, route bridging and health."
+documentation = "https://docs.rs/astrs-daemon"
+readme = "README.md"
+keywords = ["astrs", "daemon", "robotics", "dataflow", "supervision"]
+categories = ["science::robotics", "network-programming", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-graph = { workspace = true }
+astrs-log = { workspace = true }
+astrs-manifest = { workspace = true }
+astrs-recording = { workspace = true }
+astrs-scheduler = { workspace = true }
+astrs-shm = { workspace = true }
+astrs-telemetry = { workspace = true }
+astrs-time = { workspace = true }
+astrs-transport = { workspace = true }
+astrs-wire = { workspace = true }
+rustix = { workspace = true }
+# The `ros2:` bridge block crosses to `astrs-ros2-bridge-node` as JSON inside
+# `NodeSource::Ros2Bridge` — the same contract `astrs-coordinator` uses. This
+# crate never names a field of it; it is opaque `serde` data here.
+serde_json = { workspace = true }
+shlex = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The cluster harness (`tests/cluster_m2.rs`) drives a real coordinator
+# against two real daemons. `astrs-coordinator` does not depend on this
+# crate, so a dev-only edge here is acyclic.
+astrs-coordinator = { path = "../astrs-coordinator" }
+# `tests/daemon_killed_mid_route.rs` (§12 conformance zoo, scenario 15/16)
+# drives real `astrs daemon` processes through the real node-api client, the
+# same way an external operator's `astrs node attach` would. The mirror of
+# `astrs-node-api`'s own dev-only edge back to this crate — that one is
+# "Dev-only, and acyclic: astrs-daemon does not depend on astrs-node-api" in
+# its own `[dependencies]`, and this is the acyclic edge the other direction.
+astrs-node-api = { path = "../astrs-node-api" }
+astrs-yaml = { path = "../astrs-yaml" }
+
+[[test]]
+name = "node_roles"
+harness = false

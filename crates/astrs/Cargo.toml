@@ -1,0 +1,105 @@
+[package]
+name = "astrs"
+description = "AstRS: the Pure Rust dataflow middleware for the robotic age."
+documentation = "https://docs.rs/astrs"
+readme = "README.md"
+keywords = ["astrs", "robotics", "dataflow", "middleware", "ros2"]
+categories = ["science::robotics", "network-programming", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+# ---------------------------------------------------------------------------
+# The feature matrix (blueprint §5.2). See the crate-level docs for the table
+# a reader actually needs; the notes here are for whoever edits this file.
+#
+# The default is *node authoring* and nothing else — the surface an
+# application's `main` uses. Everything a node does not need (the manifest and
+# graph model, recording, telemetry, the TUI, the prover) is opt-in, so
+# `cargo add astrs` costs a node exactly what a node uses.
+# ---------------------------------------------------------------------------
+[features]
+default = ["node"]
+
+# --- the default: authoring a node -----------------------------------------
+node = [
+    "dep:astrs-node-api",
+    "data",
+    "time",
+    "log",
+    "wire",
+    "derive",
+]
+# `#[derive(AstrsMessage)]`. Separable from `node` because a crate that only
+# *defines* message types (a shared schema crate) needs the derive and not the
+# runtime; `node` turns it on because §9.1's flagship example uses it.
+derive = ["dep:astrs-operator-macros", "data"]
+
+# --- substrate, individually addressable -----------------------------------
+data = ["dep:astrs-data"]
+time = ["dep:astrs-time"]
+log = ["dep:astrs-log"]
+wire = ["dep:astrs-wire"]
+
+# Zero-copy `From`/`TryFrom` between AstRS's own columnar arrays and arrow-rs
+# (blueprint §6.1), plus the `send_arrow` output method §9.1 lists. Off by
+# default and well away from `node`: it is the one feature here that pulls a
+# large external dependency tree (four `arrow-*` crates) into a build, and a
+# node that never speaks to an arrow-native pipeline should not pay for it.
+arrow-interop = ["node", "astrs-data/arrow-interop", "astrs-node-api/arrow-interop"]
+
+# --- the other surfaces ----------------------------------------------------
+operator = ["dep:astrs-operator-api", "derive"]
+manifest = ["dep:astrs-manifest"]
+graph = ["dep:astrs-graph", "manifest"]
+runtime = ["dep:astrs-runtime", "operator"]
+recording = ["dep:astrs-recording"]
+telemetry = ["dep:astrs-telemetry"]
+tui = ["dep:astrs-tui"]
+# Pulls the SMT solver in, so it stays well away from `default`.
+verify = ["dep:astrs-verify", "astrs-verify/verify", "graph"]
+
+# Everything this facade aggregates today. Deliberately not "everything the
+# blueprint lists": the ROS 2 pillar (`astrs-cdr`, `-rtps`, `-idl`, `-ros2`,
+# `-rosbag`, `-tf`, `-urdf`) is fully implemented and independently usable,
+# but predates this facade's own feature-flag aggregation and hasn't been
+# wired into a `ros2` feature yet. It arrives here when that wiring lands.
+full = [
+    "node",
+    "operator",
+    "runtime",
+    "graph",
+    "manifest",
+    "recording",
+    "telemetry",
+    "tui",
+    "verify",
+    "arrow-interop",
+]
+
+[dependencies]
+astrs-data = { workspace = true, optional = true }
+astrs-graph = { workspace = true, optional = true }
+astrs-log = { workspace = true, optional = true }
+astrs-manifest = { workspace = true, optional = true }
+astrs-node-api = { workspace = true, optional = true }
+astrs-operator-api = { workspace = true, optional = true }
+astrs-operator-macros = { workspace = true, optional = true }
+astrs-recording = { workspace = true, optional = true }
+astrs-runtime = { workspace = true, optional = true }
+astrs-telemetry = { workspace = true, optional = true }
+astrs-time = { workspace = true, optional = true }
+astrs-tui = { workspace = true, optional = true }
+astrs-verify = { workspace = true, optional = true }
+astrs-wire = { workspace = true, optional = true }

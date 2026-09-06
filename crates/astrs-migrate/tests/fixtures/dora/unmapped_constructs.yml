@@ -1,0 +1,46 @@
+# Exercises every dora construct with no automatic AstRS equivalent
+# (blueprint §8.6: "never silently drop"). Each of these must surface as a
+# TODO(astrs migrate) comment, never vanish.
+nodes:
+  - id: camera
+    path: ./camera
+    outputs:
+      - image
+
+  - id: detector
+    hub: dora-yolo@^0.5
+    path_sha256: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    inputs:
+      image: camera/image
+    outputs:
+      - bbox
+    output_framing:
+      bbox: raw
+    output_metadata:
+      bbox: [request_id]
+    send_logs_as: structured_logs
+    some_future_field_this_importer_does_not_know_about: 42
+
+  - id: nav-stack
+    module: modules/navigation_module.yml
+    params:
+      speed: "2.0"
+      mode: turbo
+    inputs:
+      goal_pose: detector/bbox
+
+  - id: runtime-node
+    operator:
+      id: processor
+      python: process.py
+      inputs:
+        tick: dora/timer/millis/50
+      outputs:
+        - processed
+
+  - id: ros2-bridge
+    path: ./bridge
+    ros2:
+      topic: /scan
+      direction: from_astrs
+      message_type: sensor_msgs/msg/LaserScan

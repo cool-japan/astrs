@@ -1,0 +1,7 @@
+# A list of parameter names to get the types of.
+string[] names
+---
+# List of types, one for each parameter requested, in the same order.
+#
+# The type enumeration is defined in `ParameterType.msg`.
+uint8[] types

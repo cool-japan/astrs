@@ -1,0 +1,22 @@
+name: two-level-composition
+nodes:
+- id: camera
+  path: ./camera
+  outputs:
+  - frames
+  output_types:
+    frames: std/media/v1/Image
+- id: perception.detector.yolo
+  path: ./yolo
+  inputs:
+    frames: camera/frames
+  outputs:
+  - detections
+  input_types:
+    frames: std/media/v1/Image
+  output_types:
+    detections: std/vision/v1/Detections
+- id: planner
+  path: ./planner
+  inputs:
+    detections: perception.detector.yolo/detections

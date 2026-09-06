@@ -1,0 +1,26 @@
+# Both spellings in one file -- proves each key is recognized regardless of
+# which one a given block happens to use, and regardless of root vs. node
+# level. Real dora 1.0 would reject the `_unstable_` spellings outright
+# (dora-rs/dora#3220's own deny_unknown_fields regression test); this
+# fixture is deliberately constructed to prove the *importer's* leniency
+# toward files written against either dora era, not something dora 1.0
+# itself would accept as-is.
+deploy:
+  machine: coordinator-1
+_unstable_debug:
+  enable_debug_inspection: true
+nodes:
+  - id: planner
+    path: ./planner
+    outputs:
+      - plan
+    deploy:
+      machine: robot-1
+      distribute: scp
+
+  - id: executor
+    path: ./executor
+    inputs:
+      plan: planner/plan
+    _unstable_deploy:
+      machine: robot-2

@@ -1,0 +1,56 @@
+# ros2-talker-bridge/bridge.yml — blueprint §10.5's declarative bridge,
+# written exactly the way that section's own example does, applied to the
+# talker in this directory's `dataflow.yml`.
+#
+#   cargo build -p ros2-talker-bridge -p astrs-ros2-bridge-node
+#   astrs run examples/ros2-talker-bridge/bridge.yml     # runs until stopped
+#
+# A companion manifest, not `dataflow.yml` itself — see that file's own
+# header comment for exactly why a `ros2:`-sourced node cannot live in the
+# estate's headline manifest. `tests/conformance`'s estate guard still
+# parses and validates this file on every run (it walks every top-level
+# `*.yml` in this directory, not only `dataflow.yml` — the same coverage
+# `record-replay/replay.yml` gets); it is simply not the one file that
+# guard requires every node in to carry a `build:` line, which is exactly
+# right for `lidar-in` below: it is not built by this or any package, it is
+# *resolved* — `astrs-daemon` maps `NodeSource::Ros2Bridge` straight to
+# `bins/astrs-ros2-bridge-node`'s own binary, regardless of anything this
+# file could say.
+#
+# No `exit_when_nodes_finish` here, deliberately: `lidar-in` is a bridge,
+# and a bridge has no natural finish condition — it runs until told to
+# stop, the same as it would in front of a real robot's ROS 2 stack. A flag
+# that waits for every node to finish on its own would simply never fire.
+astrs: "1"
+name: ros2-talker-bridge-live
+
+nodes:
+  - id: lidar-in
+    description: Bridges /scan (sensor_msgs/msg/LaserScan) from the self-hosted talker into the AstRS graph.
+    ros2:
+      compat: humble
+      topic: /scan
+      message_type: sensor_msgs/msg/LaserScan
+      direction: to_astrs
+      qos: { reliable: true, keep_last: 10 }
+    outputs: [scan]
+    output_types:
+      scan: "std/ros2/v1/SensorMsgsLaserScan"
+    env:
+      # The same domain `ros2-talker` joins (`ros2_talker_bridge::DOMAIN_ID`)
+      # — deliberately not the ROS 2 default, so this pair never collides
+      # with a real ROS 2 stack that happens to be running on the same
+      # host. See the README for what to do if your network sandbox
+      # refuses the multicast join both sides rely on to find each other.
+      ROS_DOMAIN_ID: "93"
+
+  - id: sink
+    description: Decodes and tallies every bridged scan.
+    path: ../../target/debug/ros2-scan-sink
+    build: cargo build -p ros2-talker-bridge
+    inputs:
+      scan:
+        source: lidar-in/scan
+        queue_size: 32
+    input_types:
+      scan: "std/ros2/v1/SensorMsgsLaserScan"

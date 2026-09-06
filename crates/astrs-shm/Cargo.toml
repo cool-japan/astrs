@@ -1,0 +1,57 @@
+[package]
+name = "astrs-shm"
+description = "Crash-safe POSIX shared-memory rings powering the AstRS zero-copy same-host data plane."
+documentation = "https://docs.rs/astrs-shm"
+readme = "README.md"
+keywords = ["astrs", "shared-memory", "zero-copy", "ipc", "robotics"]
+categories = ["science::robotics", "os::unix-apis", "memory-management"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# `SegmentKey` reuses the canonical control-plane id vocabulary rather than
+# minting stand-ins: a segment is named by (dataflow, node, output, generation)
+# and those three ids are `astrs-wire`'s (blueprint §6.2, §7).
+astrs-wire = { workspace = true }
+# Commit stamps and consumer heartbeats are HLC-derived (blueprint §6.2
+# "per-consumer heartbeat word (HLC-ish counter)").
+astrs-time = { workspace = true }
+# `shm` (macOS `shm_open` backing) and `pipe` (macOS doorbell) are additive
+# feature requests on top of the workspace declaration; no version is pinned
+# here and no new external crate is introduced.
+rustix = { workspace = true, features = ["shm", "pipe"] }
+thiserror = { workspace = true }
+# Only `tokio::io::unix::AsyncFd` is used, for the async doorbell wait.
+tokio = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# `CreateFileMappingW`/`OpenFileMappingW`/`MapViewOfFile`/`UnmapViewOfFile` +
+# `SECURITY_ATTRIBUTES`/`VirtualQuery` for the Windows same-host data plane
+# (§22, 0.2.0; see `os::windows`'s module docs). Bindgen'd ABI declarations
+# only — no C is compiled, and only pulled in for a Windows target, so it
+# never enters a Unix build's dependency tree at all.
+windows-sys = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tokio = { workspace = true }
+# The §20.4 latency-ladder bench estate (blueprint §20.4, §5.2).
+criterion = { workspace = true }
+
+[[bench]]
+name = "handoff"
+harness = false
+# Criterion benches are a timing harness, not a correctness suite: keeping
+# `cargo test`/nextest from also building and *running* them (Cargo's
+# default for a `[[bench]]` target) is what keeps the ordinary green-suite
+# loop from paying a multi-second criterion sampling cost, and keeps a
+# nested-`cargo` bench (§ the cold-start harness) out of a test run.
+test = false

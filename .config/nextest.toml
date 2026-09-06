@@ -1,0 +1,27 @@
+# cargo-nextest configuration for the AstRS workspace.
+#
+# `[profile.default]` stays at zero retries: a pure-logic test (the large
+# majority of this suite — unit tests, proptests, golden-snapshot
+# comparisons) is deterministic, and a first-try failure there is real —
+# retrying it would only hide a regression behind noise.
+#
+# The one override below exists for a narrower, well-understood class: real
+# end-to-end tests that spawn OS processes and/or open real sockets
+# (`tests/*.rs` integration binaries across the workspace, plus
+# `astrs-cli`'s own unit-test binary, which embeds several process-spawning
+# `astrs run`/`astrs build` tests alongside its pure-logic ones). Run at
+# nextest's full default parallelism, this workspace's ~8,300 tests include
+# enough concurrent real subprocesses and loopback sockets that a handful can
+# occasionally miss a fixed real-time budget (an RTPS reassembly `PATIENCE`,
+# a multi-daemon message tally, a captured child's stdout) under scheduling
+# contention alone — never from a wrong assertion or a logic defect: every
+# such failure observed here reproduced 0/3 times in isolation, at a small
+# fraction of its budget. `retries = 2` absorbs exactly that contention
+# without weakening what any test checks: a genuinely broken assertion still
+# fails every attempt and is still reported as a failure.
+[profile.default]
+retries = 0
+
+[[profile.default.overrides]]
+filter = 'kind(test) | binary_id(astrs-cli)'
+retries = 2

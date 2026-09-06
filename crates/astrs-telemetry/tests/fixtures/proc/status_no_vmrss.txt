@@ -1,0 +1,6 @@
+Name:	weird-process
+State:	Z (zombie)
+Tgid:	9999
+Pid:	9999
+PPid:	1
+Threads:	1

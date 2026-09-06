@@ -1,0 +1,5 @@
+nodes:
+  - id: producer
+    path: ./producer
+    outputs: [frames]
+    output_types: { frmaes: "std/media/v1/Image[pixel=rgb8]" }

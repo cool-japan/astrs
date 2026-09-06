@@ -1,0 +1,52 @@
+# tf-broadcast — broadcasting coordinate frames and an interpolated,
+# time-travel lookup via astrs-tf (blueprint §10.6, §5.4).
+#
+#   cargo build -p tf-broadcast
+#   astrs run examples/tf-broadcast/dataflow.yml
+#
+# `path:` is relative to this file's directory, as every other example's is
+# — see hello-timer's own manifest comment for why.
+#
+# `broadcaster` publishes a *static* `map`->`odom` offset once (blueprint
+# §10.6's `/tf_static` convention — latched, sent on the first tick only)
+# and a *dynamic* `odom`->`base_link` transform on every tick, sliding along
+# X. `consumer` buffers both into its own `astrs_tf::TransformBuffer` and
+# looks up `map`->`base_link` at a timestamp exactly between two received
+# samples — the interpolated, time-travel query §10.6 promises, not merely
+# "the latest value".
+astrs: "1"
+name: tf-broadcast
+health_check_interval: 5.0
+exit_when_nodes_finish: true
+
+nodes:
+  - id: broadcaster
+    description: Publishes a latched map->odom offset and a sliding odom->base_link transform.
+    path: ../../target/debug/tf-broadcaster
+    build: cargo build -p tf-broadcast
+    inputs:
+      tick: astrs/timer/millis/20
+    outputs: [map_odom, odom_base]
+    output_types:
+      map_odom: "std/geometry/v1/Transform"
+      odom_base: "std/geometry/v1/Transform"
+    env:
+      TF_BROADCAST_TICKS: 20
+
+  - id: consumer
+    description: Buffers both frames and performs an interpolated time-travel lookup of map->base_link.
+    path: ../../target/debug/tf-consumer
+    build: cargo build -p tf-broadcast
+    inputs:
+      # Deep enough for the whole run: a lookup that lost a sample to the
+      # queue policy would no longer be the exact interpolation this example
+      # proves.
+      map_odom:
+        source: broadcaster/map_odom
+        queue_size: 32
+      odom_base:
+        source: broadcaster/odom_base
+        queue_size: 32
+    input_types:
+      map_odom: "std/geometry/v1/Transform"
+      odom_base: "std/geometry/v1/Transform"

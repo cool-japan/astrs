@@ -1,0 +1,10 @@
+schema fields=1
+meta _schema_hash=0123456789abcdef
+meta empty=
+meta std/type=std/core/v1/Float32
+field 0 name=data type=f32 nullable=0
+batch 0 rows=2 cols=1
+col 0 nulls=0
+r0 s3f800000
+r1 s40000000
+end

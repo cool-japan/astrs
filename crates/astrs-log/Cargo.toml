@@ -1,0 +1,30 @@
+[package]
+name = "astrs-log"
+description = "Structured log records, rotation and level-filtered virtual-input fan-out for AstRS."
+documentation = "https://docs.rs/astrs-log"
+readme = "README.md"
+keywords = ["astrs", "logging", "tracing", "robotics", "middleware"]
+categories = ["science::robotics", "development-tools::debugging"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# Source of `HlcTimestamp`, re-exported from this crate's `lib.rs` so every
+# `LogRecord` carries the one canonical HLC timestamp type in the tree
+# (blueprint §5.2, §4.3) instead of a crate-local stand-in.
+astrs-time = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,8 @@
+schema fields=1
+field 0 name=s type=struct(id:u32:1,p:struct(x:f64:0,y:f64:0):0,label:utf8:1) nullable=1
+batch 0 rows=3 cols=1
+col 0 nulls=1
+r0 {id=1 p={x=d3ff0000000000000 y=dbff8000000000000} label=u61}
+r1 -
+r2 {id=3 p={x=d4008000000000000 y=d4004000000000000} label=-}
+end

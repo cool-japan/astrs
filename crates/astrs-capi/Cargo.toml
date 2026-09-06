@@ -1,0 +1,37 @@
+[package]
+name = "astrs-capi"
+description = "The AstRS C API: a stable extern \"C\" node surface for non-Rust callers."
+documentation = "https://docs.rs/astrs-capi"
+readme = "README.md"
+keywords = ["astrs", "capi", "ffi", "robotics", "dataflow"]
+categories = ["science::robotics", "external-ffi-bindings", "api-bindings"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# `lib` keeps the crate usable (and doctestable) from Rust; `staticlib` and
+# `cdylib` are what a C/C++ build actually links against. Producing all three
+# from one crate is the standard shape for a Rust-authored C API — no C is
+# compiled here, only exported.
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+astrs-data = { workspace = true }
+astrs-node-api = { workspace = true }
+
+# Dev-only: the round-trip tests build `NodeSpawnSpec`/`InputSpec`/`OutputSpec`
+# fixtures to hand to `astrs_node_api::testing::MockDaemon` directly (the
+# in-process loopback harness — see `src/tests.rs`). Production code never
+# names an `astrs-wire` type: every type it needs (`DataId`, `Metadata`,
+# `NodeError`, `Event`, `RawOutput`, ...) arrives through `astrs-node-api`'s
+# own re-exports, so this crate has no regular dependency on `astrs-wire`.
+[dev-dependencies]
+astrs-wire = { path = "../astrs-wire" }

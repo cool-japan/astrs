@@ -1,0 +1,38 @@
+[package]
+name = "log-aggregation"
+description = "AstRS example: multi-node structured logs collected through the daemon's astrs/logs virtual source (blueprint §8.4, §13)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "log_aggregation"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "log-worker"
+path = "src/bin/log_worker.rs"
+
+[[bin]]
+name = "log-aggregator"
+path = "src/bin/log_aggregator.rs"
+
+[dependencies]
+astrs-log = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-wire = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+astrs-manifest = { workspace = true }
+
+[lints]
+workspace = true

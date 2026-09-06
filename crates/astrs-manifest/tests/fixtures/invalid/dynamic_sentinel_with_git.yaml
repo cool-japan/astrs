@@ -1,0 +1,4 @@
+nodes:
+  - id: weird
+    git: https://example.com/repo.git
+    path: dynamic

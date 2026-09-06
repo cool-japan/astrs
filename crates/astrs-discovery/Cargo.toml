@@ -1,0 +1,44 @@
+[package]
+name = "astrs-discovery"
+description = "Static peer lists and UDP multicast beacons for AstRS daemon and coordinator rendezvous."
+documentation = "https://docs.rs/astrs-discovery"
+readme = "README.md"
+keywords = ["astrs", "discovery", "multicast", "robotics", "networking"]
+categories = ["science::robotics", "network-programming"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# `DaemonId` (per-process peer identity), `MachineName`, `AuthToken`,
+# `PROTOCOL_VERSION` and the `WireEncode`/`WireDecode` oxicode wrapper — the
+# beacon reuses the same identifier vocabulary and codec configuration as
+# every other AstRS wire type instead of inventing a second one (blueprint
+# §3.3 "one spec per concern").
+astrs-wire = { workspace = true }
+# `HlcTimestamp`/`HlcClock`/`Clock`/`ManualClock` — beacons carry the sender's
+# HLC so watchers can dedup and order announcements (blueprint §4.3).
+astrs-time = { workspace = true }
+# `Encode`/`Decode` derive for `Beacon` and friends; the one oxicode
+# configuration used everywhere on the wire (blueprint §7.1).
+oxicode = { workspace = true }
+# `HmacSha384::mac_truncated`/`verify_truncated` for the beacon `auth_tag`,
+# and `random_range` for jittered send intervals (blueprint §16, §6.4).
+oxicrypto = { workspace = true }
+# Config-file / `--json` human boundary for `PeerBook` (blueprint §18.1:
+# "serde, serde_json -- JSON at human boundaries").
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

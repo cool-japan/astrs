@@ -1,0 +1,4 @@
+schema fields=2
+field 0 name=a type=i32 nullable=1
+field 1 name=b type=utf8 nullable=0
+end

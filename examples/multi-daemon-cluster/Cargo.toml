@@ -1,0 +1,40 @@
+[package]
+name = "multi-daemon-cluster"
+description = "AstRS example: one dataflow spanning two daemons, with the crossing asserted in-graph (blueprint §4.2, §6.4)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "multi_daemon_cluster"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose: cargo puts
+# every member's binaries in one `target/<profile>/` directory, so two
+# packages declaring the same `[[bin]] name` silently overwrite each other and
+# a manifest then spawns whichever was built last. `tests/conformance`'s
+# estate guard asserts this uniqueness.
+[[bin]]
+name = "cluster-sensor"
+path = "src/bin/cluster_sensor.rs"
+
+[[bin]]
+name = "cluster-planner"
+path = "src/bin/cluster_planner.rs"
+
+[[bin]]
+name = "cluster-checker"
+path = "src/bin/cluster_checker.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

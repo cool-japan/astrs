@@ -1,0 +1,38 @@
+# dynamic-add-remove — the base graph `astrs node add`/`node remove` are
+# demonstrated against (blueprint §8.3, §17).
+#
+#   cargo build -p dynamic-add-remove -p astrs-cli
+#   astrs up examples/dynamic-add-remove/dataflow.yml &
+#   astrs node add flow examples/dynamic-add-remove/fragments/worker.yml --start
+#   astrs node remove flow worker
+#   astrs down flow
+#
+# See this example's README for the full walkthrough, including how to name
+# the dataflow (`flow` above is a placeholder — `astrs list` prints the real
+# id/name `astrs node add`/`remove` expect).
+#
+# `path:` is relative to this file's directory (that is what `astrs run`/
+# `astrs up` resolve *this manifest's* node paths against); the fragment in
+# `fragments/worker.yml` is a different file, read directly by `astrs node
+# add` rather than through this manifest, and resolves its own `path:`
+# differently — see the README.
+#
+# `anchor` is the only node this manifest declares. It runs for a long time
+# on purpose (2000 ticks at 50 ms — a little over a minute) so a reader has
+# room to run the `node add`/`node remove` commands above against a cluster
+# that is genuinely still up, the way `astrs up` (backgroundable, unlike
+# `astrs run`) is meant to be used.
+astrs: "1"
+name: dynamic-add-remove
+exit_when_nodes_finish: true
+
+nodes:
+  - id: anchor
+    description: Publishes an incrementing counter for a dynamically-added node to read.
+    path: ../../target/debug/dynamic-anchor
+    build: cargo build -p dynamic-add-remove
+    inputs:
+      tick: astrs/timer/millis/50
+    outputs: [beats]
+    env:
+      DYNAMIC_ANCHOR_BEATS: 2000

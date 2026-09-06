@@ -1,0 +1,49 @@
+[package]
+name = "astrs-wire"
+description = "AstRS control-plane protocol types, framed codec and version negotiation."
+documentation = "https://docs.rs/astrs-wire"
+readme = "README.md"
+keywords = ["astrs", "robotics", "protocol", "codec", "middleware"]
+categories = ["science::robotics", "network-programming", "encoding"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-time = { workspace = true }
+# Never called: forces blake3's `pure` (Rust-only) feature onto the copy that
+# oxicrypto pulls in, so no C SIMD kernel is ever compiled (blueprint §18.1).
+blake3 = { workspace = true }
+oxicode = { workspace = true }
+oxicrypto = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+serde_json = { workspace = true }
+# The §20.4 latency-ladder bench estate (blueprint §20.4, §5.2). No §20.4
+# gate targets this crate directly; see `benches/frame_codec.rs`'s header.
+criterion = { workspace = true }
+
+[[bench]]
+name = "frame_codec"
+harness = false
+# See `astrs-shm/Cargo.toml`'s identical note: keeps `cargo test`/nextest
+# from also building and running the bench.
+test = false
+
+[[bench]]
+name = "crc32c"
+harness = false
+test = false

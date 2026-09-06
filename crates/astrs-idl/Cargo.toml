@@ -1,0 +1,32 @@
+[package]
+name = "astrs-idl"
+description = "ROS 2 .msg, .srv and .action parsing with Rust code generation for AstRS."
+documentation = "https://docs.rs/astrs-idl"
+readme = "README.md"
+keywords = ["astrs", "idl", "ros2", "codegen", "msg"]
+categories = ["science::robotics", "parsing", "development-tools::build-utils"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-cdr = { workspace = true }
+astrs-data = { workspace = true }
+glob = { workspace = true }
+heck = { workspace = true }
+prettyplease = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+quick-xml = { workspace = true }
+syn = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

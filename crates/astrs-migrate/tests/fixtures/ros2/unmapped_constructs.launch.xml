@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<!--
+  Every construct this importer cannot mechanically map onto an AstRS
+  manifest field, in one file (mirrors dora/unmapped_constructs.yml's
+  role for from-dora): a missing name= (falls back to exec=), an id
+  collision from that fallback, a param file, an if= condition, respawn/
+  respawn_delay/output, an unrecognized node attribute, a <lifecycle_node>,
+  a <node> nested inside an unrecognized wrapper tag (<timer> -- a real,
+  registered launch action, launch.actions.TimerAction,
+  @expose_action('timer'), that this importer does not special-case by
+  name but must still recurse into per blueprint §8.6), a composable node
+  container, and an unrecognized launch tag. Nothing here may be silently
+  dropped -- see tests/from_ros2.rs's
+  unmapped_constructs_are_never_silently_dropped.
+-->
+<launch>
+  <!-- No name=: falls back to exec "worker" as a placeholder id. -->
+  <node pkg="pkg_a" exec="worker"/>
+
+  <!-- Collides with the fallback id "worker" above. -->
+  <node pkg="pkg_a" exec="worker2" name="worker"/>
+
+  <node pkg="pkg_a" exec="cfg_node" name="cfg_node">
+    <param from="settings.yaml"/>
+  </node>
+
+  <node pkg="pkg_a" exec="cond_node" name="cond_node" if="$(var use_cond)"/>
+
+  <node pkg="pkg_a" exec="respawn_node" name="respawn_node"
+        respawn="true" respawn_delay="2.0" output="screen"/>
+
+  <node pkg="pkg_a" exec="gdb_node" name="gdb_node" launch-prefix="gdb --args"/>
+
+  <lifecycle_node pkg="pkg_a" exec="managed_node" name="managed_node"/>
+
+  <timer period="5.0">
+    <node pkg="pkg_a" exec="delayed_node" name="delayed_node"/>
+  </timer>
+
+  <node_container pkg="rclcpp_components" exec="component_container" name="container1">
+    <composable_node pkg="image_proc" plugin="image_proc::RectifyNode" name="rectify"/>
+    <composable_node pkg="image_proc" plugin="image_proc::ResizeNode" name="resize"/>
+  </node_container>
+
+  <let name="robot_name" value="turtlebot"/>
+</launch>

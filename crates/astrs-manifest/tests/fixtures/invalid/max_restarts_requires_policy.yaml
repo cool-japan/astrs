@@ -1,0 +1,4 @@
+nodes:
+  - id: flaky
+    path: ./flaky
+    max_restarts: 3

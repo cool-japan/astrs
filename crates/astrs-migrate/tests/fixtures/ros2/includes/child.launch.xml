@@ -1,0 +1,4 @@
+<?xml version="1.0"?>
+<launch>
+  <node pkg="pkg_a" exec="child_node" name="child_node"/>
+</launch>

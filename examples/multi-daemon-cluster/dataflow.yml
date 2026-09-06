@@ -1,0 +1,80 @@
+# multi-daemon-cluster — one dataflow spanning two machines (§4.2, §6.4).
+#
+# On one machine (placement ignored, single embedded daemon):
+#   cargo build -p multi-daemon-cluster
+#   astrs run examples/multi-daemon-cluster/dataflow.yml
+#
+# On two daemons (placement honoured, data crosses a peer route twice) — see
+# this example's README for the full four-terminal recipe:
+#   astrs up --port 7407
+#   astrs daemon --coordinator 127.0.0.1:7407 --machine robot-a --peer-port 7409 ...
+#   astrs daemon --coordinator 127.0.0.1:7407 --machine robot-b --peer-port 7410 ...
+#   astrs start examples/multi-daemon-cluster/dataflow.yml --attach
+#
+#   machine robot-a                     machine robot-b
+#   [sensor] ──readings───────────────► [planner]
+#   [checker] ◄──────────────commands── ┘
+#
+# Both edges cross the boundary, in opposite directions: the shortest graph
+# that exercises a peer route each way. The checker asserts the crossing from
+# *inside* the graph, by comparing the placement each node stamped into its own
+# messages — see the README for why a consumer cannot tell otherwise.
+#
+# `deploy.machine` is what the coordinator resolves against its connected
+# daemons; `deploy.labels` are carried alongside (declared here, advertised by
+# each daemon at registration, delivered to the node in its spawn spec) and are
+# asserted to survive the trip. Label *selectors* are not how placement is
+# resolved in this build — `machine:` is.
+astrs: "1"
+name: multi-daemon-cluster
+health_check_interval: 5.0
+exit_when_nodes_finish: true
+
+nodes:
+  - id: sensor
+    description: Publishes readings stamped with its own machine.
+    path: ../../target/debug/cluster-sensor
+    build: cargo build -p multi-daemon-cluster
+    deploy:
+      machine: robot-a
+      labels:
+        role: sensing
+    inputs:
+      tick: astrs/timer/millis/20
+    outputs: [readings]
+    env:
+      CLUSTER_READINGS: 12
+
+  - id: planner
+    description: Answers each reading, stamping both placements into the reply.
+    path: ../../target/debug/cluster-planner
+    build: cargo build -p multi-daemon-cluster
+    deploy:
+      machine: robot-b
+      labels:
+        role: compute
+    inputs:
+      readings:
+        source: sensor/readings
+        # Lossless across the machine boundary: a dropped message would look
+        # exactly like a peer route that lost one, and the verdict would blame
+        # the wrong thing (§11.2).
+        queue_size: 64
+        queue_policy: backpressure
+    outputs: [commands]
+
+  - id: checker
+    description: Asserts the route crossed a machine boundary twice.
+    path: ../../target/debug/cluster-checker
+    build: cargo build -p multi-daemon-cluster
+    deploy:
+      machine: robot-a
+      labels:
+        role: sensing
+    inputs:
+      commands:
+        source: planner/commands
+        queue_size: 64
+        queue_policy: backpressure
+    env:
+      CLUSTER_READINGS: 12

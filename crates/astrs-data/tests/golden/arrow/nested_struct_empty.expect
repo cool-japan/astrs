@@ -1,0 +1,5 @@
+schema fields=1
+field 0 name=s type=struct(id:u32:1,p:struct(x:f64:0,y:f64:0):0,label:utf8:1) nullable=1
+batch 0 rows=0 cols=1
+col 0 nulls=0
+end

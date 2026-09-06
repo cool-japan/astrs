@@ -1,0 +1,11 @@
+module:
+  name: passthrough
+  inputs: [data]
+  outputs: [data]
+
+nodes:
+  - id: relay
+    path: ./relay
+    inputs:
+      data: _mod/data
+    outputs: [data]

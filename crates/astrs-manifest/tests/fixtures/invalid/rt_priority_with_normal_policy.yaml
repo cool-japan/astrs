@@ -1,0 +1,6 @@
+nodes:
+  - id: worker
+    path: ./worker
+    rt:
+      policy: normal
+      priority: 40

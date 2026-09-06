@@ -1,0 +1,40 @@
+[package]
+name = "ros2-talker-bridge"
+description = "AstRS example: bridging a self-hosted DDS talker into an AstRS sink via the declarative ros2: block (blueprint §10.5)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "ros2_talker_bridge"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "ros2-talker"
+path = "src/bin/ros2_talker.rs"
+
+[[bin]]
+name = "ros2-scan-sink"
+path = "src/bin/ros2_scan_sink.rs"
+
+[dependencies]
+astrs-cdr = { workspace = true }
+astrs-data = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-ros2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+astrs-manifest = { workspace = true }
+
+[lints]
+workspace = true

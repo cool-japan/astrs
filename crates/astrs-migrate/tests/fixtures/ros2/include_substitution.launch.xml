@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!--
+  An <include> whose file= uses a launch substitution -- the overwhelming
+  majority of real-world ROS 2 includes look like this
+  ($(find-pkg-share <pkg>)/launch/<file>). This importer cannot resolve a
+  package share directory without a ROS installation (blueprint §1.2:
+  "zero ROS installation"), so it is noted rather than followed. See
+  tests/from_ros2.rs's include_with_substitution_is_noted_not_followed.
+-->
+<launch>
+  <node pkg="pkg_a" exec="root_node" name="root_node"/>
+  <include file="$(find-pkg-share other_pkg)/launch/other.launch.xml"/>
+</launch>

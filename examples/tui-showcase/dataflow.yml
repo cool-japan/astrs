@@ -1,0 +1,45 @@
+# tui-showcase — the real topology `astrs-tui`'s Graph tab renders in this
+# example's scripted-snapshot goldens (blueprint §13, §17).
+#
+#   cargo build -p tui-showcase
+#   astrs run examples/tui-showcase/dataflow.yml
+#
+# `path:` is relative to this file's directory (that is what `astrs run`
+# resolves node paths against), so the manifest works from any checkout
+# without an absolute path in it.
+#
+#   astrs/timer/millis/40 ──► tick ──► [camera] ──frames──► [detector]
+#
+# `camera`/`detector` are the same pair blueprint §8.1 names in its own
+# canonical manifest example — deliberately: this is a genuinely runnable
+# graph (`astrs run` really does something with it), and it is *also* the
+# exact topology `tui_showcase::ScriptedCluster` parses back out of this
+# very file to build the `GraphInfo` its `TestBackend` goldens render (see
+# this crate's README). The scripted run-time detail on top — node states,
+# metrics, logs, timeline — is fabricated; the topology underneath it is
+# real and shared with whatever `astrs run` actually does.
+astrs: "1"
+name: tui-showcase
+exit_when_nodes_finish: true
+
+nodes:
+  - id: camera
+    description: Publishes a small deterministic frame on every tick.
+    path: ../../target/debug/showcase-camera
+    build: cargo build -p tui-showcase
+    inputs:
+      tick: astrs/timer/millis/40
+    outputs: [frames]
+    env:
+      TUI_SHOWCASE_FRAMES: 20
+
+  - id: detector
+    description: Turns each frame into a detection count.
+    path: ../../target/debug/showcase-detector
+    build: cargo build -p tui-showcase
+    inputs:
+      frames:
+        source: camera/frames
+        queue_size: 32
+        queue_policy: backpressure
+    outputs: [detections]

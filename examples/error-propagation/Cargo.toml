@@ -1,0 +1,34 @@
+[package]
+name = "error-propagation"
+description = "AstRS example: a failing node's NodeFailed reaching its graph peers (blueprint §12)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "error_propagation"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "fault-source"
+path = "src/bin/fault_source.rs"
+
+[[bin]]
+name = "fault-watcher"
+path = "src/bin/fault_watcher.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+astrs-wire = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

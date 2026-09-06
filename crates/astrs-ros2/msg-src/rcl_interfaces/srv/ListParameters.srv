@@ -1,0 +1,11 @@
+# The depth value that means "recurse without limit".
+uint64 DEPTH_RECURSIVE=0
+
+# The prefixes to list parameters for.
+string[] prefixes
+
+# How deep to recurse below the given prefixes.
+uint64 depth
+---
+# The names and prefixes discovered.
+ListParametersResult result

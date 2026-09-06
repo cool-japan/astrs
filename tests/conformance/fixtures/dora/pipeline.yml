@@ -1,0 +1,45 @@
+# A dora dataflow descriptor, migrated and then *run* by
+# `tests/conformance/tests/m2_dora_migration.rs` (blueprint §8.6, §21 M2).
+#
+# Shaped after the reference checkout's `examples/service-example/dataflow.yml`
+# with a timer-driven node layered on, and carrying every construct §8.6 names:
+#
+#   * `dora/timer/*` virtual inputs          → `astrs/timer/*`
+#   * `build:` + `path:` nodes               → unchanged, and really spawned
+#   * `restart_policy: on-failure`           → `on_failure` (the hyphen rewrite)
+#   * a `service-client`/`service-server` pair → the same `pattern:` in AstRS
+#
+# The `path:` entries name binaries this workspace's own examples build, so the
+# migrated manifest is not merely well-formed — the suite runs it. They are
+# repository-relative for exactly the reason every committed example manifest's
+# are: an absolute path would only work on the machine that wrote it.
+nodes:
+  - id: greeter
+    build: cargo build -p hello-timer
+    path: ../../target/debug/hello-timer
+    inputs:
+      tick: dora/timer/millis/50
+    restart_policy: on-failure
+    max_restarts: 3
+    restart_delay: 0.5
+
+  - id: client
+    build: cargo build -p service-roundtrip
+    path: ../../target/debug/service-client
+    pattern: service-client
+    inputs:
+      tick: dora/timer/millis/50
+      response: server/response
+    outputs:
+      - request
+
+  - id: server
+    build: cargo build -p service-roundtrip
+    path: ../../target/debug/service-server
+    pattern: service-server
+    inputs:
+      request: client/request
+    outputs:
+      - response
+    restart_policy: on-failure
+    health_check_timeout: 2.0

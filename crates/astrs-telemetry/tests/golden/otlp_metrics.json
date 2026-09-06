@@ -1,0 +1,105 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "astrs-daemon"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "astrs-telemetry",
+            "version": "0.1.0"
+          },
+          "metrics": [
+            {
+              "name": "frames_total",
+              "sum": {
+                "dataPoints": [
+                  {
+                    "asInt": "42",
+                    "timeUnixNano": "1700000000000000000"
+                  }
+                ],
+                "aggregationTemporality": 2,
+                "isMonotonic": true
+              }
+            },
+            {
+              "name": "io_bytes_total",
+              "sum": {
+                "dataPoints": [
+                  {
+                    "asInt": "100",
+                    "timeUnixNano": "1700000000000000000",
+                    "attributes": [
+                      {
+                        "key": "direction",
+                        "value": {
+                          "stringValue": "rx"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "asInt": "200",
+                    "timeUnixNano": "1700000000000000000",
+                    "attributes": [
+                      {
+                        "key": "direction",
+                        "value": {
+                          "stringValue": "tx"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "aggregationTemporality": 2,
+                "isMonotonic": true
+              }
+            },
+            {
+              "name": "latency_seconds",
+              "histogram": {
+                "dataPoints": [
+                  {
+                    "count": "10",
+                    "sum": 4.25,
+                    "bucketCounts": [
+                      "3",
+                      "6",
+                      "1"
+                    ],
+                    "explicitBounds": [
+                      0.1,
+                      1.0
+                    ],
+                    "timeUnixNano": "1700000000000000000"
+                  }
+                ],
+                "aggregationTemporality": 2
+              }
+            },
+            {
+              "name": "queue_depth",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 3.5,
+                    "timeUnixNano": "1700000000000000000"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

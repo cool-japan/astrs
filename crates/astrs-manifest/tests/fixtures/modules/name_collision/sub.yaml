@@ -1,0 +1,5 @@
+module:
+  name: sub
+nodes:
+  - id: b
+    path: ./b

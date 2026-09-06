@@ -1,0 +1,58 @@
+//! __ASTRS_PROJECT_NAME__ -- an AstRS dylib-hosted operator, scaffolded by
+//! `astrs new operator-dylib` (blueprint §9.3, §22).
+//!
+//! Unlike a compiled-in operator (`astrs new operator`), this crate builds
+//! to a `cdylib` and is never linked into a runtime binary at compile
+//! time: the manifest's `dylib:` field names the built artifact's path,
+//! and `astrs-runtime`'s `dylib-operators` feature `dlopen`s it at spawn
+//! time (see the starter `dataflow.yml` next to this file). Build this
+//! crate on its own --
+//!
+//! ```text
+//! cargo build --release
+//! ```
+//!
+//! -- and point the manifest's `dylib:` field at the resulting shared
+//! library: `target/release/lib__ASTRS_PROJECT_LIB_FILE_STEM__.so` on
+//! Linux, `target/release/lib__ASTRS_PROJECT_LIB_FILE_STEM__.dylib` on
+//! macOS, `target/release/__ASTRS_PROJECT_LIB_FILE_STEM__.dll` on Windows
+//! -- cargo's own `cdylib` naming rule turns every `-` in the crate name
+//! (this crate's own directory name) into `_` for the built file, which is
+//! why the starter `dataflow.yml` next to this file already spells the
+//! `dylib:` path with underscores rather than the project name verbatim.
+
+use astrs_operator_api::{
+    Operator, OpEvent, OpOutput, OpResult, Status, export_dylib_operator,
+};
+
+/// __ASTRS_PROJECT_NAME__'s per-instance state.
+///
+/// `Default` seeds a fresh instance every time this dylib's exported
+/// constructor is called (the loader's own restart loop rebuilds a fresh
+/// instance in place, exactly like a compiled-in operator) -- add fields
+/// here for anything the operator needs to remember between events.
+#[derive(Default)]
+pub struct __ASTRS_PROJECT_TYPE__;
+
+impl Operator for __ASTRS_PROJECT_TYPE__ {
+    fn on_event(&mut self, event: &OpEvent, out: &mut OpOutput) -> OpResult<Status> {
+        match event {
+            OpEvent::Input { id, .. } => {
+                let _ = (id, &out);
+                Ok(Status::Continue)
+            }
+            OpEvent::Stop { .. } => Ok(Status::Finished),
+            // `OpEvent` is `#[non_exhaustive]`: a downstream crate (this
+            // one) must handle variants it does not yet know about.
+            _ => Ok(Status::Continue),
+        }
+    }
+}
+
+// The one line that makes this crate loadable at all: exports the stable
+// `#[repr(C)]` ABI `astrs-runtime`'s `dylib-operators` feature opens via
+// `dlopen`/`LoadLibrary` and drives through. Registered under
+// `"__ASTRS_PROJECT_TYPE__"`, the same name this crate's `dataflow.yml`
+// names in its `operator:` field -- the loader cross-checks the two and
+// fails clearly on a mismatch rather than silently running the wrong type.
+export_dylib_operator!(__ASTRS_PROJECT_TYPE__);

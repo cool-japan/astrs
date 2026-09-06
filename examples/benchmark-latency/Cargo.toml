@@ -1,0 +1,39 @@
+[package]
+name = "benchmark-latency"
+description = "AstRS example: closed-loop round-trip latency across the local (same-daemon) plane, with p50/p90/p99 (blueprint §20.4)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "benchmark_latency"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose: cargo puts
+# every member's binaries in one `target/<profile>/` directory, so two
+# packages declaring the same `[[bin]] name` silently overwrite each other and
+# a manifest then spawns whichever was built last. `tests/conformance`'s
+# estate guard asserts this uniqueness.
+[[bin]]
+name = "latency-prober"
+path = "src/bin/latency_prober.rs"
+
+[[bin]]
+name = "latency-reflector"
+path = "src/bin/latency_reflector.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+astrs-manifest = { workspace = true }
+
+[lints]
+workspace = true

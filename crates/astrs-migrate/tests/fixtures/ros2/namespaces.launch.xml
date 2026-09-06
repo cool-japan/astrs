@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!--
+  Exercises namespace composition: push_ros_namespace (underscore and
+  hyphen spellings), a node-level namespace= combining with the ambient
+  one, and all three remap-target name forms (absolute, relative,
+  private ~). See tests/from_ros2.rs's namespace_composition test.
+-->
+<launch>
+  <group>
+    <push_ros_namespace namespace="robot1"/>
+    <node pkg="pkg_a" exec="driver" name="driver">
+      <remap from="cmd_vel" to="cmd_vel"/>
+    </node>
+    <node pkg="pkg_a" exec="lidar" name="lidar" namespace="sensors">
+      <remap from="scan" to="~/scan_raw"/>
+    </node>
+  </group>
+  <group>
+    <push-ros-namespace namespace="/robot2"/>
+    <node pkg="pkg_a" exec="driver" name="driver">
+      <remap from="cmd_vel" to="/emergency_stop"/>
+    </node>
+  </group>
+  <node pkg="pkg_a" exec="driver" name="driver"/>
+</launch>

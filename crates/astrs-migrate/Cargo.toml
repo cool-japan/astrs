@@ -1,0 +1,25 @@
+[package]
+name = "astrs-migrate"
+description = "Manifest migration into AstRS from dora-rs descriptors and ROS 2 launch files."
+documentation = "https://docs.rs/astrs-migrate"
+readme = "README.md"
+keywords = ["astrs", "migration", "dora", "ros2", "robotics"]
+categories = ["science::robotics", "development-tools"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+astrs-manifest = { workspace = true }
+astrs-yaml = { workspace = true }
+quick-xml = { workspace = true }
+serde = { workspace = true }
+shlex = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

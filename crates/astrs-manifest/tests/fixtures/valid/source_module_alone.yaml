@@ -1,0 +1,3 @@
+nodes:
+  - id: sub-graph
+    module: ./sub-graph.yaml

@@ -1,0 +1,33 @@
+[package]
+name = "astrs-record-node"
+description = "The AstRS recorder node: writes dataflow traffic into .arec sessions."
+documentation = "https://docs.rs/astrs-record-node"
+readme = "README.md"
+keywords = ["astrs", "record", "robotics", "dataflow", "arec"]
+categories = ["science::robotics", "command-line-utilities"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "astrs_record_node"
+path = "src/lib.rs"
+
+[[bin]]
+name = "astrs-record-node"
+path = "src/main.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+astrs-recording = { workspace = true }
+astrs-time = { workspace = true }
+astrs-wire = { workspace = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

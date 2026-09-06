@@ -1,0 +1,21 @@
+# `module:` (direct AstRS equivalent, carried through with a note pointing
+# at re-running the importer on the referenced file) plus
+# `_unstable_deploy:` (a direct structural mapping onto AstRS's `deploy:`,
+# including a non-default `distribute:` strategy that has no AstRS
+# equivalent and must be flagged).
+nodes:
+  - id: planner
+    path: ./planner
+    outputs:
+      - plan
+    _unstable_deploy:
+      machine: robot-1
+      working_dir: /opt/astrs/planner
+      labels:
+        gpu: "true"
+      distribute: scp
+
+  - id: nav-stack
+    module: modules/navigation_module.yml
+    inputs:
+      goal_pose: planner/plan

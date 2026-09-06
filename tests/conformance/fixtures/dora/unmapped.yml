@@ -1,0 +1,16 @@
+# A dora descriptor using constructs AstRS has no equivalent for (§8.6):
+# `hub:`, `conda_env:` and `_unstable_debug:`. The promise is that these
+# produce **labelled TODO comments and a non-zero exit code**, never a silent
+# drop — which is what `m2_dora_migration.rs` asserts against this file.
+nodes:
+  - id: detector
+    hub: dora-yolo@^0.5
+    outputs:
+      - bbox
+
+  - id: viewer
+    path: ../../target/debug/hello-timer
+    conda_env: perception
+    _unstable_debug: true
+    inputs:
+      bbox: detector/bbox

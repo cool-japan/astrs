@@ -1,0 +1,40 @@
+schema fields=2
+field 0 name=seq type=u64 nullable=0
+field 1 name=name type=utf8 nullable=1
+batch 0 rows=0 cols=2
+col 0 nulls=0
+col 1 nulls=0
+batch 1 rows=2 cols=2
+col 0 nulls=0
+r0 100
+r1 101
+col 1 nulls=1
+r0 u6e315f30
+r1 -
+batch 2 rows=4 cols=2
+col 0 nulls=0
+r0 200
+r1 201
+r2 202
+r3 203
+col 1 nulls=2
+r0 u6e325f30
+r1 -
+r2 u6e325f32
+r3 -
+batch 3 rows=6 cols=2
+col 0 nulls=0
+r0 300
+r1 301
+r2 302
+r3 303
+r4 304
+r5 305
+col 1 nulls=3
+r0 u6e335f30
+r1 -
+r2 u6e335f32
+r3 -
+r4 u6e335f34
+r5 -
+end

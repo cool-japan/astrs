@@ -1,0 +1,4 @@
+# AstRS uses the stock rustfmt style for the 2024 edition. The only setting we
+# state explicitly is the style edition, so formatting is stable regardless of
+# which toolchain a contributor runs `cargo fmt` with.
+style_edition = "2024"

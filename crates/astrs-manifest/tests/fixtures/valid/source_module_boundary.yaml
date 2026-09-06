@@ -1,0 +1,11 @@
+module:
+  name: perception
+  inputs: [frames]
+  outputs: [detections]
+
+nodes:
+  - id: detector
+    path: ./detector
+    inputs:
+      frames: _mod/frames
+    outputs: [detections]

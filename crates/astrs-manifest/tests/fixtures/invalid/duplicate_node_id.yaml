@@ -1,0 +1,5 @@
+nodes:
+  - id: camera
+    path: ./camera-a
+  - id: camera
+    path: ./camera-b

@@ -1,0 +1,5 @@
+nodes:
+  - id: multi-ref
+    git: https://example.com/repo.git
+    branch: main
+    tag: v1.0.0

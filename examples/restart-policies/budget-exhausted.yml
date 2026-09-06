@@ -1,0 +1,32 @@
+# restart-policies — the budget as a ceiling (§12).
+#
+#   cargo build -p restart-policies
+#   astrs run examples/restart-policies/budget-exhausted.yml   # exits non-zero
+#
+# The same worker, told to fail every time, with `max_restarts: 2`. The
+# supervisor starts it exactly **three** times — the original plus two
+# restarts — and then stops: `$RESTART_LOG` holds three lines, and the
+# dataflow's result carries the node's last exit code rather than looping for
+# ever.
+#
+# A non-zero exit is the point of this file, not a defect: `astrs run` exits
+# with the dataflow's severity (§17), and a graph whose node exhausted its
+# restart budget has failed.
+astrs: "1"
+name: restart-policies-budget
+exit_when_nodes_finish: true
+
+nodes:
+  - id: worker
+    description: Fails every incarnation, exhausting its restart budget.
+    path: ../../target/debug/restart-worker
+    build: cargo build -p restart-policies
+    inputs:
+      tick: astrs/timer/millis/20
+    restart_policy: on_failure
+    max_restarts: 2
+    restart_delay: 0.02
+    max_restart_delay: 0.1
+    env:
+      # Far more than the budget: no incarnation ever succeeds.
+      RESTART_FAILURES: 99

@@ -1,0 +1,9 @@
+module:
+  name: perception
+  inputs: [frames]
+
+nodes:
+  - id: detector
+    path: ./detector
+    inputs:
+      frames: _mod/framez

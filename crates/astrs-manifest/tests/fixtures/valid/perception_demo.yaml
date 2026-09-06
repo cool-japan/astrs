@@ -1,0 +1,38 @@
+# astrs-schema.json is generated from the Rust structs; editors get completion.
+astrs: "1"                 # manifest format major (optional, default 1)
+name: perception-demo
+health_check_interval: 5.0
+exit_when_nodes_finish: true
+
+nodes:
+  - id: camera
+    path: ./target/release/camera-node
+    build: cargo build --release -p camera-node
+    outputs: [frames]
+    output_types: { frames: "std/media/v1/Image[pixel=rgb8]" }
+    env: { CAMERA_INDEX: 0 }
+
+  - id: detector
+    git: https://github.com/cool-japan/astrs-yolo
+    tag: v0.3.1
+    build: cargo build --release
+    path: target/release/yolo-node
+    inputs:
+      frames:
+        source: camera/frames
+        queue_size: 2
+        queue_policy: drop_oldest
+    outputs: [detections]
+    output_types: { detections: "std/vision/v1/Detections" }
+    restart_policy: on_failure
+    max_restarts: 5
+
+  - id: recorder
+    record: [camera/frames, detector/detections]   # sugar → astrs-record-node
+
+  - id: planner
+    path: ./planner
+    deploy: { machine: robot-1 }
+    inputs:
+      detections: detector/detections
+      tick: astrs/timer/hz/50

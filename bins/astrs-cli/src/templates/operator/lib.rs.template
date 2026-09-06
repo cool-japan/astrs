@@ -1,0 +1,43 @@
+//! __ASTRS_PROJECT_NAME__ -- an AstRS runtime-hosted operator, scaffolded
+//! by `astrs new operator` (blueprint §9.3).
+//!
+//! Operators compile **into** a runtime binary via `register_operator!`
+//! (static dispatch — no `dlopen` in 0.1.0): there is no `main`, no
+//! process of its own, and no manifest `path:`. A host node's manifest
+//! entry references it by the name passed to `register_operator!` below
+//! (see the starter `dataflow.yml` next to this file). Add this crate as
+//! a dependency of whatever `astrs-runtime` host binary your daemon
+//! actually runs, and pass [`operator_entry`] to that host's
+//! `OperatorRegistry::from_entries`.
+
+use astrs::prelude::*;
+
+/// __ASTRS_PROJECT_NAME__'s per-instance state.
+///
+/// `Default` seeds a fresh instance on every (re)start — add fields here
+/// for anything the operator needs to remember between events.
+#[derive(Default)]
+pub struct __ASTRS_PROJECT_TYPE__;
+
+impl Operator for __ASTRS_PROJECT_TYPE__ {
+    fn on_event(&mut self, event: &OpEvent, out: &mut OpOutput) -> OpResult<Status> {
+        match event {
+            OpEvent::Input { id, .. } => {
+                let _ = (id, &out);
+                Ok(Status::Continue)
+            }
+            OpEvent::Stop { .. } => Ok(Status::Finished),
+            // `OpEvent` is `#[non_exhaustive]`: a downstream crate (this
+            // one) must handle variants it does not yet know about.
+            _ => Ok(Status::Continue),
+        }
+    }
+}
+
+/// This operator's registry entry -- pass this to a host binary's
+/// `OperatorRegistry::from_entries` (blueprint §9.3). Registered under
+/// `"__ASTRS_PROJECT_TYPE__"`, the same name this crate's `dataflow.yml`
+/// names in its `operator:` field.
+pub fn operator_entry() -> (&'static str, OperatorConstructor) {
+    astrs::register_operator!(__ASTRS_PROJECT_TYPE__)
+}

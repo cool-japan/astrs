@@ -1,0 +1,11 @@
+# `a.b` is a perfectly ordinary node id (dots are legal, see
+# `is_valid_id_charset`) — but it collides with the id that expanding the
+# `a` module below produces: its internal `b` node becomes `a.b` once
+# prefixed. Neither node is invalid on its own; the collision only exists
+# after expansion.
+nodes:
+  - id: a.b
+    path: ./collider
+
+  - id: a
+    module: ./sub.yaml

@@ -1,0 +1,49 @@
+[package]
+name = "astrs-tf"
+description = "A tf2-compatible transform tree with time-travel lookup and SE(3) types."
+documentation = "https://docs.rs/astrs-tf"
+readme = "README.md"
+keywords = ["astrs", "tf2", "transform", "robotics", "ros2"]
+categories = ["science::robotics", "mathematics"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Columnar payloads: `AstrsMessage`, the `Struct`/`Float64` array types, and
+# the `std/geometry/v1/{Vector3,Quaternion,Transform}` layout constructors
+# this crate's native SE(3) types report their `data_type()` against
+# (`astrs-data::urn::layouts::geometry`'s own docs say astrs-tf's transform
+# tree is built on `transform_layout()` — blueprint §24.3).
+astrs-data = { workspace = true }
+# `geometry_msgs`/`std_msgs`/`builtin_interfaces` pre-generated common
+# interfaces (blueprint §10.3) — `TransformStamped` and friends — plus the
+# `runtime::ColumnValue`/list-column helpers `TfMessage`'s hand-written
+# columnar impl reuses rather than re-deriving.
+astrs-idl = { workspace = true }
+# `CdrSerde`, `cdr_struct!`/`cdr_default_impl!` — `TfMessage` (`tf2_msgs/msg/
+# TFMessage`, hand-written since tf2_msgs is not part of the
+# `common_interfaces` bundle `astrs-idl` pre-generates, blueprint §10.3) is
+# implemented against these directly, the same "anything a user writes by
+# hand" use case this crate's own docs name.
+astrs-cdr = { workspace = true }
+# `HlcTimestamp` interop for `TfStamp` (blueprint §4.3's event envelope
+# currency) — a narrow bridge, not this crate's primary time type; see
+# `time` module docs for why tf2's own domain needs its own `TfStamp`.
+astrs-time = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+# Dev-only: verifies `TfMessage::URN`'s hand-minted string against
+# `astrs-idl::naming::mint_urn`'s actual mechanical rule
+# (`heck::ToUpperCamelCase`) rather than trusting hand-derivation — see
+# `bridge`'s test module.
+heck = { workspace = true }

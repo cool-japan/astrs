@@ -1,0 +1,8 @@
+nodes:
+  - id: producer
+    path: ./producer
+    outputs: [frames]
+  - id: consumer
+    path: ./consumer
+    inputs:
+      data: producer/detections

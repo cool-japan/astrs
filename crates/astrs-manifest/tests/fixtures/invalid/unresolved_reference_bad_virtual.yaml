@@ -1,0 +1,5 @@
+nodes:
+  - id: consumer
+    path: ./consumer
+    inputs:
+      tick: astrs/timer/hz/0

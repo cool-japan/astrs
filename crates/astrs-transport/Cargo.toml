@@ -1,0 +1,45 @@
+[package]
+name = "astrs-transport"
+description = "UDS, TCP and QUIC connection abstraction with backpressure and reconnect for AstRS."
+documentation = "https://docs.rs/astrs-transport"
+readme = "README.md"
+keywords = ["astrs", "transport", "quic", "networking", "robotics"]
+categories = ["science::robotics", "network-programming", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# The QUIC backend (blueprint §6.4). Off by default because `oxiquic` 0.2.1
+# cannot construct a server endpoint through its facade — see the crate-level
+# "QUIC status" documentation in `src/lib.rs`.
+quic = ["dep:oxiquic"]
+
+[dependencies]
+astrs-time = { workspace = true }
+astrs-wire = { workspace = true }
+oxiarc-lz4 = { workspace = true }
+oxiarc-zstd = { workspace = true }
+oxiquic = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The §20.4 latency-ladder bench estate (blueprint §20.4, §5.2).
+criterion = { workspace = true }
+
+[[bench]]
+name = "mux_loopback"
+harness = false
+# See `astrs-shm/Cargo.toml`'s identical note: keeps `cargo test`/nextest
+# from also building and running the bench.
+test = false

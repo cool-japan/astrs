@@ -1,0 +1,36 @@
+[package]
+name = "streaming-segments"
+description = "AstRS example: chunked streaming of large payloads over the session_id/segment_id/seq/fin pattern (blueprint §9.4)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "streaming_segments"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "segment-streamer"
+path = "src/bin/segment_streamer.rs"
+
+[[bin]]
+name = "segment-collector"
+path = "src/bin/segment_collector.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+astrs-manifest = { workspace = true }
+
+[lints]
+workspace = true

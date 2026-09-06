@@ -1,0 +1,37 @@
+[package]
+name = "rust-pipeline"
+description = "AstRS example: the canonical typed three-node pipeline (blueprint §8.1)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "rust_pipeline"
+path = "src/lib.rs"
+
+[[bin]]
+name = "camera-sim"
+path = "src/bin/camera_sim.rs"
+
+[[bin]]
+name = "detector-sim"
+path = "src/bin/detector_sim.rs"
+
+[[bin]]
+name = "recorder-sim"
+path = "src/bin/recorder_sim.rs"
+
+[dependencies]
+astrs-data = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-operator-macros = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

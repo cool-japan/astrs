@@ -1,0 +1,72 @@
+[package]
+name = "astrs-coordinator"
+description = "The AstRS cluster coordinator: daemon registry, dataflow FSM, build orchestration and fan-out."
+documentation = "https://docs.rs/astrs-coordinator"
+readme = "README.md"
+keywords = ["astrs", "coordinator", "robotics", "dataflow", "cluster"]
+categories = ["science::robotics", "network-programming", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The single control-plane protocol: ControlRequest/ControlReply,
+# CoordinatorEvent/DaemonEvent, the Hello/Welcome/Refused handshake types,
+# and every id/record/status type the coordinator hands back verbatim.
+astrs-wire = { workspace = true }
+# HlcClock/HlcTimestamp: every dataflow/daemon/param transition and every
+# outbound heartbeat is HLC-stamped (blueprint §4.3).
+astrs-time = { workspace = true }
+# Manifest parse/validate/expand, driving `Build`/`Start`.
+astrs-manifest = { workspace = true }
+# `GetManifest` (`astrs top`'s Graph tab, blueprint §5.2) re-serializes the
+# live registry's already-expanded `Manifest` back to YAML for the wire.
+astrs-yaml = { workspace = true }
+# Graph model, edge type-checking, the placement planner and the dynamic
+# topology diff/apply the coordinator's dispatch layer is built on.
+astrs-graph = { workspace = true }
+# Durable coordinator state: params, dataflow/daemon registries, the build
+# cache index and the mutation catch-up log.
+astrs-store = { workspace = true }
+# The framed-stream + Hello/Welcome handshake driver used to accept CLI and
+# daemon connections on the coordinator's listening socket.
+astrs-transport = { workspace = true }
+# Optional coordinator-side beacon so daemons using multicast rendezvous can
+# find this coordinator without static configuration (blueprint §6.2's
+# "daemon/coordinator rendezvous").
+astrs-discovery = { workspace = true }
+# The in-process metrics registry backing the coordinator's own gauges
+# (connected daemons, active dataflows, mutation-log depth).
+astrs-telemetry = { workspace = true }
+# Coordinator high availability (blueprint §22): replicating the durable
+# registry across an odd-sized coordinator set. Optional — a single-machine
+# deployment pays nothing for it.
+astrs-raft = { workspace = true, optional = true }
+oxicrypto = { workspace = true }
+# The `ha` feature encodes replicated registry commands with the same codec
+# the wire uses; only that feature needs the derive macros directly.
+oxicode = { workspace = true, optional = true }
+oxistore-core = { workspace = true }
+oxistore-kv-redb = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+shlex = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[features]
+default = []
+# Coordinator high availability: replicate the durable registry across an
+# odd-sized set of coordinators with Raft (blueprint §22). Off by default,
+# because a single-coordinator deployment should not carry a consensus
+# protocol, a second listener or a write-ahead log it never uses.
+ha = ["dep:astrs-raft", "dep:oxicode"]

@@ -1,0 +1,54 @@
+# record-replay (replay target) — the graph `astrs replay --into` rewrites.
+#
+#   cargo build -p record-replay -p astrs-replay-node
+#   astrs run    examples/record-replay/dataflow.yml            # writes the session
+#   astrs replay "$TMPDIR/astrs-record-replay-session.arec" \
+#         --into examples/record-replay/replay.yml > /tmp/replayed.yml
+#   PATH="$PWD/target/debug:$PATH" astrs run /tmp/replayed.yml
+#
+# This file is the graph **before** the rewrite, and it is a perfectly good
+# graph on its own: run it and the live sensor feeds the probe. `astrs replay
+# --into` replaces `sensor` in place — same id, same `outputs:` — so the
+# probe's `inputs: { frames: sensor/frames }` still resolves and nothing about
+# the wiring changes. That in-place substitution is the whole of §14.
+#
+# It differs from `dataflow.yml` in exactly the way §14 advertises: the
+# detector — the stage under test — is gone, and an assertion sink stands
+# where it stood. *Test a new planner against last week's sensor data*, with
+# the new planner's job reduced to the one thing a test can check exactly.
+#
+#   [sensor := astrs-replay-node] ──frames──► [probe] ──► sequence.json
+#
+# The rewritten `sensor` becomes `path: astrs-replay-node`, a bare name the
+# operating system resolves on `PATH`: a manifest that named a build directory
+# would not survive being deployed. Hence the `PATH=` prefix above in a
+# checkout where that binary has only been built, not installed.
+astrs: "1"
+name: record-replay-from-arec
+exit_when_nodes_finish: true
+
+nodes:
+  - id: sensor
+    description: The node replay takes over; `--into` swaps only its source.
+    path: ../../target/debug/arec-sensor
+    build: cargo build -p record-replay
+    inputs:
+      # Kept so this file is runnable as written, driving the live sensor.
+      # The rewritten replay node ignores it: an `.arec` session carries its
+      # own pacing, and `--mode`/`--speed` decide how it is honoured.
+      tick: astrs/timer/millis/20
+    outputs: [frames]
+    env:
+      RECORD_REPLAY_FRAMES: 12
+
+  - id: probe
+    description: Writes down every payload it saw, in arrival order.
+    path: ../../target/debug/arec-probe
+    build: cargo build -p record-replay
+    inputs:
+      frames:
+        source: sensor/frames
+        # Lossless, for the same reason the live graph is: a probe that
+        # dropped a payload would accuse replay of losing it (§11.2).
+        queue_size: 64
+        queue_policy: backpressure

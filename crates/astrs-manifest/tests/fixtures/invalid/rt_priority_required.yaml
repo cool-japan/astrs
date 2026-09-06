@@ -1,0 +1,5 @@
+nodes:
+  - id: control-loop
+    path: ./control-loop
+    rt:
+      policy: fifo

@@ -1,0 +1,118 @@
+schema fields=23
+field 0 name=null type=null nullable=1
+field 1 name=bool type=bool nullable=1
+field 2 name=i8 type=i8 nullable=1
+field 3 name=i16 type=i16 nullable=1
+field 4 name=i32 type=i32 nullable=1
+field 5 name=i64 type=i64 nullable=1
+field 6 name=u8 type=u8 nullable=1
+field 7 name=u16 type=u16 nullable=1
+field 8 name=u32 type=u32 nullable=1
+field 9 name=u64 type=u64 nullable=1
+field 10 name=f16 type=f16 nullable=1
+field 11 name=f32 type=f32 nullable=1
+field 12 name=f64 type=f64 nullable=1
+field 13 name=bin type=binary nullable=1
+field 14 name=lbin type=largebinary nullable=1
+field 15 name=utf8 type=utf8 nullable=1
+field 16 name=lutf8 type=largeutf8 nullable=1
+field 17 name=fsb type=fsb(3) nullable=1
+field 18 name=fsl type=fsl(item:i8:0,2) nullable=1
+field 19 name=list type=list(item:f64:1) nullable=1
+field 20 name=struct type=struct(a:i16:1,b:binary:1) nullable=1
+field 21 name=ts type=timestamp(ns) nullable=1
+field 22 name=dur type=duration(ns) nullable=1
+batch 0 rows=3 cols=23
+col 0 nulls=0
+r0 -
+r1 -
+r2 -
+col 1 nulls=1
+r0 T
+r1 -
+r2 F
+col 2 nulls=1
+r0 -128
+r1 -
+r2 127
+col 3 nulls=1
+r0 -32768
+r1 -
+r2 32767
+col 4 nulls=1
+r0 -2147483648
+r1 -
+r2 2147483647
+col 5 nulls=1
+r0 -9223372036854775808
+r1 -
+r2 9223372036854775807
+col 6 nulls=1
+r0 0
+r1 -
+r2 255
+col 7 nulls=1
+r0 0
+r1 -
+r2 65535
+col 8 nulls=1
+r0 0
+r1 -
+r2 4294967295
+col 9 nulls=1
+r0 0
+r1 -
+r2 18446744073709551615
+col 10 nulls=1
+r0 h3c00
+r1 -
+r2 hc100
+col 11 nulls=1
+r0 s3f800000
+r1 -
+r2 sc0200000
+col 12 nulls=1
+r0 d3ff0000000000000
+r1 -
+r2 dc004000000000000
+col 13 nulls=1
+r0 x6162
+r1 -
+r2 x
+col 14 nulls=1
+r0 x
+r1 -
+r2 x6364
+col 15 nulls=1
+r0 u6869
+r1 -
+r2 u
+col 16 nulls=1
+r0 u
+r1 -
+r2 u796f
+col 17 nulls=1
+r0 x010203
+r1 -
+r2 x090807
+col 18 nulls=1
+r0 [1 -2]
+r1 -
+r2 [5 -6]
+col 19 nulls=1
+r0 [d3ff8000000000000 -]
+r1 -
+r2 [dbfd0000000000000]
+col 20 nulls=1
+r0 {a=1 b=x71}
+r1 -
+r2 {a=- b=x7272}
+col 21 nulls=1
+r0 0
+r1 -
+r2 1700000000123456789
+col 22 nulls=1
+r0 -1
+r1 -
+r2 1000000000
+end

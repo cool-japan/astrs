@@ -1,0 +1,42 @@
+[package]
+name = "astrs-store"
+description = "Coordinator persistence for AstRS parameters, dataflow state and the build cache index."
+documentation = "https://docs.rs/astrs-store"
+readme = "README.md"
+keywords = ["astrs", "store", "persistence", "robotics", "coordinator"]
+categories = ["science::robotics", "database"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# Id vocabulary shared with the rest of the control plane (DataflowId,
+# DaemonId, NodeId, ParamKey, ...) plus the status/info records this crate
+# persists verbatim (NodeInfo, DaemonInfo, DataflowStatus) and the oxicode
+# wire codec (WireEncode/WireDecode) reused for the mutation log — see
+# `lib.rs` for why the log is oxicode-encoded while the buckets are JSON.
+astrs-wire = { workspace = true }
+# HlcClock/HlcTimestamp: every param write and mutation-log record is
+# HLC-stamped (blueprint §4.3), and astrs-wire does not re-export the clock
+# itself, so this crate depends on astrs-time directly (Layer 1 peer dep,
+# same pattern astrs-wire itself uses).
+astrs-time = { workspace = true }
+oxicode = { workspace = true }
+oxistore-core = { workspace = true }
+oxistore-kv-redb = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# Blocking redb operations are pushed through `tokio::task::spawn_blocking`
+# so the coordinator's async event loop never blocks on file I/O.
+tokio = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

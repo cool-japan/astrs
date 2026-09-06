@@ -1,0 +1,8 @@
+[package]
+name = "__ASTRS_PROJECT_NAME__"
+version = "0.1.0"
+edition = "2024"
+description = "An AstRS node, scaffolded by `astrs new node`."
+
+[dependencies]
+astrs = "0.1"

@@ -1,0 +1,55 @@
+# action-progress — a long-running action goal with progress feedback over
+# the goal_id/goal_status FSM (blueprint §9.4).
+#
+#   cargo build -p action-progress
+#   astrs run examples/action-progress/dataflow.yml
+#
+# `path:` is relative to this file's directory (that is what `astrs run`
+# resolves node paths against), so the manifest works from any checkout
+# without an absolute path in it.
+#
+#   [client] ──goal────► [server]
+#      ▲                     │
+#      └──────status─────────┘
+#
+# `pattern:` declares the two roles (mirroring `service-roundtrip`'s use of
+# the same field for services): `astrs validate` checks the pair is wired in
+# both directions, and the scheduler gives every correlated message
+# (`goal_id`/`goal_status`) queue-eviction immunity (§11.2) — a status update
+# and the feedback riding beside it are never the message a full queue drops.
+#
+# `client` submits its goals **one at a time**, waiting for each to reach a
+# terminal status before submitting the next — simpler bookkeeping than
+# tracking several `GoalTracker` FSMs in parallel, and the claim under test
+# (progress feedback arrives in order, ending in the right terminal status)
+# does not need concurrent goals to be checkable.
+astrs: "1"
+name: action-progress
+exit_when_nodes_finish: true
+
+nodes:
+  - id: client
+    description: Submits goals one at a time and records every feedback update.
+    path: ../../target/debug/progress-client
+    build: cargo build -p action-progress
+    pattern: action-client
+    inputs:
+      status: server/status
+    input_types:
+      status: "std/core/v1/Float64"
+    outputs: [goal]
+    output_types:
+      goal: "std/core/v1/Int64"
+
+  - id: server
+    description: Executes each goal in four steps, reporting fractional progress.
+    path: ../../target/debug/progress-server
+    build: cargo build -p action-progress
+    pattern: action-server
+    inputs:
+      goal: client/goal
+    input_types:
+      goal: "std/core/v1/Int64"
+    outputs: [status]
+    output_types:
+      status: "std/core/v1/Float64"

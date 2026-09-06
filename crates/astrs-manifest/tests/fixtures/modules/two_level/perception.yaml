@@ -1,0 +1,11 @@
+module:
+  name: perception
+  inputs: [frames]
+  outputs: [detections]
+
+nodes:
+  - id: detector
+    module: ./detector.yaml
+    inputs:
+      frames: _mod/frames
+    outputs: [detections]

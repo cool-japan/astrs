@@ -1,0 +1,29 @@
+[package]
+name = "astrs-tui"
+description = "The ratatui live monitor for AstRS: graph view, node stats, HLC timeline and log tail."
+documentation = "https://docs.rs/astrs-tui"
+readme = "README.md"
+keywords = ["astrs", "tui", "ratatui", "monitor", "robotics"]
+categories = ["science::robotics", "command-line-interface", "visualization"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+astrs-graph = { workspace = true }
+astrs-manifest = { workspace = true }
+astrs-recording = { workspace = true }
+astrs-time = { workspace = true }
+astrs-transport = { workspace = true }
+astrs-wire = { workspace = true }
+crossterm = { workspace = true }
+ratatui = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

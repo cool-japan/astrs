@@ -1,0 +1,42 @@
+# rosbag-reader — reading a rosbag2 .db3 via astrs-rosbag and feeding it
+# into a pipeline (blueprint §10.6, §5.4).
+#
+#   cargo build -p rosbag-reader
+#   astrs run examples/rosbag-reader/dataflow.yml
+#
+# `path:` is relative to this file's directory, as every other example's is
+# — see hello-timer's own manifest comment for why.
+#
+# `feeder` writes a tiny fixture `.db3` bag in code (no checked-in binary
+# fixture, no external ROS install), reads it straight back with the same
+# crate, and republishes each message on the typed port `feed`. `sink`
+# tallies what arrives. See this example's README for pointing `astrs bag
+# info` at the generated bag afterward.
+astrs: "1"
+name: rosbag-reader
+health_check_interval: 5.0
+exit_when_nodes_finish: true
+
+nodes:
+  - id: feeder
+    description: Writes a tiny fixture .db3 bag, reads it back, and republishes each message.
+    path: ../../target/debug/bag-feeder
+    build: cargo build -p rosbag-reader
+    inputs:
+      tick: astrs/timer/millis/50
+    outputs: [feed]
+    output_types:
+      feed: "std/ros2/v1/StdMsgsString"
+    env:
+      ROSBAG_READER_MESSAGES: 8
+
+  - id: sink
+    description: Tallies every message astrs-rosbag fed into the pipeline.
+    path: ../../target/debug/bag-sink
+    build: cargo build -p rosbag-reader
+    inputs:
+      feed:
+        source: feeder/feed
+        queue_size: 32
+    input_types:
+      feed: "std/ros2/v1/StdMsgsString"

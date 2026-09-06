@@ -1,0 +1,26 @@
+//! __ASTRS_PROJECT_NAME__ -- an AstRS node, scaffolded by `astrs new node`
+//! (blueprint §9.1).
+//!
+//! Edit this file to do real work: declare your message type(s) with
+//! `#[derive(AstrsMessage)]`, get a typed output handle via
+//! `node.output::<T>("name")`, and match on `Event::Input { id, data,
+//! meta }` for each input this node declares in its manifest.
+
+use astrs::prelude::*;
+
+fn main() -> Result<(), NodeError> {
+    let (node, mut events) = Node::init_from_env()?;
+
+    while let Some(event) = events.recv() {
+        match event {
+            Event::Input { id, .. } => {
+                node.log_info("received an input");
+                let _ = id;
+            }
+            Event::InputClosed { .. } => {}
+            Event::Stop(_) => break,
+            _ => {}
+        }
+    }
+    Ok(())
+}

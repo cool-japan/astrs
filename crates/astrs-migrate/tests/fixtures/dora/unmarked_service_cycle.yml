@@ -1,0 +1,22 @@
+# A minimal service request/response cycle -- shaped exactly like
+# `timer_restart_service.yml`'s `service-client`/`service-server` pair
+# (client's `response` sources the server's output, server's `request`
+# sources the client's output), but with `pattern:` omitted on both sides.
+# Real dora example dataflows (`service-example`, `action-example`, ...)
+# wire this same shape and, being dora, never declare a `pattern:` for it
+# -- this fixture exercises the resulting "cycle with no declared pattern"
+# migration note.
+nodes:
+  - id: client
+    path: ./client
+    inputs:
+      response: server/response
+    outputs:
+      - request
+
+  - id: server
+    path: ./server
+    inputs:
+      request: client/request
+    outputs:
+      - response

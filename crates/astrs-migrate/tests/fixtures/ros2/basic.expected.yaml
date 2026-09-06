@@ -1,0 +1,18 @@
+# Migrated from a ROS 2 launch file by `astrs migrate from-ros2`.
+# 1 note below need attention -- search for "TODO(astrs migrate)".
+
+nodes:
+# TODO(astrs migrate): ros2 bridge scaffold for node `chatter_demo_talker` (pkg=`demo_nodes_cpp`, exec=`talker`): topic `/chatter` derived from <remap from="chatter" to="/chatter"/>; message_type could not be inferred from the launch file alone, and direction (to_astrs/from_astrs) is not derivable either -- fill in both by hand, then add an `outputs:` (for to_astrs) or `inputs:` (for from_astrs) entry once direction is chosen. qos is left unset, using astrs-rtps's defaults (§10.2) unless this topic needs specific reliability/durability/history.
+- id: chatter_demo_talker
+  ros2:
+    compat: humble
+    topic: /chatter
+    namespace: /chatter_demo
+    node_name: talker
+  args:
+  - --ros-args
+  - -p
+  - use_sim_time:=true
+  env:
+    TALKER_LOG_LEVEL: debug
+    rate: '10'

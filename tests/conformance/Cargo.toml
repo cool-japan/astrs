@@ -1,0 +1,44 @@
+[package]
+name = "astrs-conformance"
+description = "AstRS conformance suite: the milestone end-to-end proofs (blueprint §20.3)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "astrs_conformance"
+path = "src/lib.rs"
+
+[dependencies]
+astrs-manifest = { workspace = true }
+astrs-yaml = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+astrs-cli = { workspace = true }
+astrs-coordinator = { workspace = true }
+astrs-daemon = { workspace = true }
+astrs-migrate = { workspace = true }
+astrs-recording = { workspace = true }
+astrs-rosbag = { workspace = true }
+astrs-time = { workspace = true }
+astrs-transport = { workspace = true }
+astrs-wire = { workspace = true }
+error-propagation = { workspace = true }
+multi-daemon-cluster = { workspace = true }
+record-replay = { workspace = true }
+restart-policies = { workspace = true }
+rust-pipeline = { workspace = true }
+service-roundtrip = { workspace = true }
+shm-zero-copy-probe = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

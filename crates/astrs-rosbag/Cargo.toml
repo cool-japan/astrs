@@ -1,0 +1,46 @@
+[package]
+name = "astrs-rosbag"
+description = "rosbag2 .db3 and .mcap reading, .db3 writing and .arec conversion for AstRS."
+documentation = "https://docs.rs/astrs-rosbag"
+readme = "README.md"
+keywords = ["astrs", "rosbag", "ros2", "robotics", "mcap"]
+categories = ["science::robotics", "encoding", "parsing"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# The .arec container this crate converts to/from (blueprint §14).
+astrs-recording = { workspace = true }
+# `EncapsulationHeader`/`EncapsulationKind` — peeking at a CDR payload's
+# 4-octet header to label `serialization_format` honestly, never a full
+# decode (blueprint §10.6's "CDR payloads pass through opaquely").
+astrs-cdr = { workspace = true }
+astrs-time = { workspace = true }
+astrs-wire = { workspace = true }
+# `metadata.yaml` (rosbag2_storage's sidecar) and the `.arec` topic-manifest
+# sidecar this crate embeds in `Header.manifest_yaml` are both YAML.
+astrs-yaml = { workspace = true }
+# `.mcap` chunk decompression (blueprint §5.2, §19.1).
+oxiarc-lz4 = { workspace = true }
+oxiarc-zstd = { workspace = true }
+# `Connection`/`Value`/`Row`/`ToSqlValue` — the trait vocabulary
+# `oxisql-sqlite-compat` implements; see the root workspace Cargo.toml note.
+oxisql-core = { workspace = true }
+# `blocking`: astrs-rosbag's public API is synchronous, matching
+# `astrs-recording`'s `Reader`/`Writer` and the CLI's dispatch style — no
+# tokio runtime is threaded through a Layer-2 ROS interop crate that
+# otherwise needs none (blueprint §19.1: no libsqlite3 either way).
+oxisql-sqlite-compat = { workspace = true, features = ["blocking"] }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

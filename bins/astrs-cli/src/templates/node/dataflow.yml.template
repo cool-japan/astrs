@@ -1,0 +1,12 @@
+# Starter manifest for __ASTRS_PROJECT_NAME__, scaffolded by `astrs new
+# node`. Build the node, then:
+#   astrs validate dataflow.yml
+#   astrs run dataflow.yml
+nodes:
+  - id: __ASTRS_PROJECT_NAME__
+    build: cargo build --release
+    path: ./target/release/__ASTRS_PROJECT_NAME__
+    inputs:
+      tick: astrs/timer/secs/1
+    outputs:
+      - status

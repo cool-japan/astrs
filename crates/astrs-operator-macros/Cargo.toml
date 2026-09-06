@@ -1,0 +1,39 @@
+[package]
+name = "astrs-operator-macros"
+description = "Procedural macros backing the AstRS operator API."
+documentation = "https://docs.rs/astrs-operator-macros"
+readme = "README.md"
+keywords = ["astrs", "operator", "macros", "robotics", "dataflow"]
+categories = [
+    "science::robotics",
+    "development-tools::procedural-macro-helpers",
+]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+heck = { workspace = true }
+# Resolves the *name* a downstream crate reaches `astrs-data` /
+# `astrs-operator-api` by, at expansion time, from that crate's own
+# `Cargo.toml` (see `crate_path`'s module docs for why a hardcoded
+# `::astrs_data` path cannot work for a crate whose only dependency is the
+# `astrs` facade). Pure Rust: its single runtime dependency is `toml_edit`.
+proc-macro-crate = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
+
+[dev-dependencies]
+astrs-data = { path = "../astrs-data" }
+astrs-operator-macros = { path = "." }
+
+[lints]
+workspace = true

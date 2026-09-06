@@ -1,0 +1,42 @@
+[package]
+name = "astrs-verify"
+description = "SMT-backed graph proofs for AstRS: deadlock freedom, queue bounds and rate consistency."
+documentation = "https://docs.rs/astrs-verify"
+readme = "README.md"
+keywords = ["astrs", "verification", "smt", "robotics", "dataflow"]
+categories = ["science::robotics", "development-tools::testing", "mathematics"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# The whole crate is the blueprint's `verify` feature (§15). Without it the
+# crate still compiles — it exposes the model, the obligation catalog and
+# the report types — but every proof reports
+# `Discharge::NotAttempted { reason: SolverUnavailable }` instead of calling
+# a solver. This is what lets `astrs-cli` depend on the crate
+# unconditionally and gate only the *proving* on a feature.
+default = []
+verify = ["dep:oxiz"]
+
+[dependencies]
+astrs-graph = { workspace = true }
+astrs-manifest = { workspace = true }
+astrs-yaml = { workspace = true }
+# Default features only: the LIA/LRA core is all the obligation encodings
+# need, and skipping `nlsat`/`optimization`/`proof`/`spacer` keeps the
+# `verify` feature's dependency tree (and its §18 purity audit surface) as
+# small as the obligations allow.
+oxiz = { workspace = true, optional = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

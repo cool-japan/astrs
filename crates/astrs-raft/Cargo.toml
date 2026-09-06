@@ -1,0 +1,24 @@
+[package]
+name = "astrs-raft"
+description = "Raft consensus over astrs-wire: coordinator high availability for AstRS clusters."
+documentation = "https://docs.rs/astrs-raft"
+readme = "README.md"
+keywords = ["astrs", "raft", "consensus", "robotics", "dataflow"]
+categories = ["science::robotics", "asynchronous", "network-programming"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-wire = { workspace = true }
+oxicode = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

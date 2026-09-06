@@ -1,0 +1,25 @@
+[package]
+name = "astrs-urdf"
+description = "URDF robot models for AstRS: links, joints and kinematic chains feeding astrs-tf."
+documentation = "https://docs.rs/astrs-urdf"
+readme = "README.md"
+keywords = ["astrs", "urdf", "kinematics", "robotics", "ros2"]
+categories = ["science::robotics", "parsing", "mathematics"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-data = { workspace = true }
+astrs-tf = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

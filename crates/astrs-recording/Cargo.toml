@@ -1,0 +1,32 @@
+[package]
+name = "astrs-recording"
+description = "The .arec recording container for AstRS: writer, reader, merger and seekable index."
+documentation = "https://docs.rs/astrs-recording"
+readme = "README.md"
+keywords = ["astrs", "recording", "replay", "robotics", "arec"]
+categories = ["science::robotics", "encoding"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# HLC timestamps stamp every entry (blueprint §14); `astrs-wire`'s codec,
+# ids and `Metadata` type are the entry payload's shared vocabulary with
+# every other AstRS wire consumer.
+astrs-time = { workspace = true }
+astrs-wire = { workspace = true }
+oxicode = { workspace = true }
+# `.arec`'s entry-block compression codec (blueprint §5.2, §19.1) — the one
+# codec this container uses, matching the crate catalog's own line item.
+oxiarc-zstd = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

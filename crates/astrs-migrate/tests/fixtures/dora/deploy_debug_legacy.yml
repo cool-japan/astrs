@@ -1,0 +1,26 @@
+# Pre-1.0 dora spelling throughout: `_unstable_deploy:`/`_unstable_debug:`
+# at both root and node level -- the prefix dora-rs/dora#3220 dropped for
+# 1.0. Exercises the root-level shape `module_and_deploy.yml` does not
+# cover (that fixture only has the node-level `_unstable_deploy:`); real
+# dora 1.0 rejects both of these keys outright now (deny_unknown_fields),
+# but this importer still has to read dataflow files written against
+# pre-1.0 dora.
+_unstable_deploy:
+  machine: coordinator-1
+  labels:
+    site: "factory-a"
+_unstable_debug:
+  enable_debug_inspection: true
+nodes:
+  - id: camera
+    path: ./camera
+    outputs:
+      - frames
+    _unstable_deploy:
+      machine: robot-1
+      working_dir: /opt/astrs/camera
+
+  - id: recorder
+    path: ./recorder
+    inputs:
+      frames: camera/frames

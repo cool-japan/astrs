@@ -1,0 +1,21 @@
+schema fields=3
+field 0 name=li type=list(item:i32:1) nullable=1
+field 1 name=ls type=list(item:utf8:1) nullable=1
+field 2 name=lst type=list(item:struct(a:i32:1,b:utf8:1):1) nullable=1
+batch 0 rows=4 cols=3
+col 0 nulls=1
+r0 [1 2]
+r1 -
+r2 []
+r3 [- 4 5]
+col 1 nulls=0
+r0 [u61]
+r1 [- u636363]
+r2 [u]
+r3 []
+col 2 nulls=1
+r0 [{a=10 b=u78} {a=- b=u79}]
+r1 [-]
+r2 -
+r3 [{a=40 b=u} {a=50 b=u7a7a}]
+end

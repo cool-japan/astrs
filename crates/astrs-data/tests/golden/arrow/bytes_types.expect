@@ -1,0 +1,33 @@
+schema fields=5
+field 0 name=bin type=binary nullable=1
+field 1 name=lbin type=largebinary nullable=1
+field 2 name=utf8 type=utf8 nullable=1
+field 3 name=lutf8 type=largeutf8 nullable=1
+field 4 name=fsb type=fsb(5) nullable=1
+batch 0 rows=4 cols=5
+col 0 nulls=1
+r0 x616263
+r1 -
+r2 x
+r3 x00ff8001
+col 1 nulls=1
+r0 x0001
+r1 x
+r2 -
+r3 x7a
+col 2 nulls=1
+r0 u68656c6c6f
+r1 u
+r2 -
+r3 ue697a5e69cace8aa9e20f09fa68020c3bc6ec3af63c3b864c3a9
+col 3 nulls=1
+r0 -
+r1 u6c61726765
+r2 uc39f
+r3 u
+col 4 nulls=1
+r0 x0102030405
+r1 -
+r2 x0000000000
+r3 xffffffffff
+end

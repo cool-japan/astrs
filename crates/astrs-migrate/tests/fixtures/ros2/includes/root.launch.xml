@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!--
+  Paired with child.launch.xml: exercises relative <include> resolution
+  (blueprint §8.6's mechanical-mapping scope). See
+  tests/from_ros2.rs's include_resolves_relative_path_and_both_nodes_appear.
+-->
+<launch>
+  <node pkg="pkg_a" exec="root_node" name="root_node"/>
+  <include file="child.launch.xml"/>
+</launch>

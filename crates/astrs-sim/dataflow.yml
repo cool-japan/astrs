@@ -1,0 +1,81 @@
+# astrs-sim — a deterministic 2-D kinematic playground: a differential-
+# drive base, a lidar, and odometry, wired into a runnable three-node
+# dataflow (blueprint §5.3). See `astrs_sim`'s own crate docs for the full
+# walkthrough this manifest is the worked example of.
+#
+#   cargo build -p astrs-sim
+#   astrs run crates/astrs-sim/dataflow.yml
+#
+# `path:` is relative to this file's directory, as every other example's
+# is — see hello-timer's own manifest comment for why.
+#
+# `teleop` drives a deterministic straight-then-arc schedule (no human
+# joystick — see `astrs-sim-teleop`'s own docs) on `cmd_vel`. `sim` ticks
+# in lockstep with the *same* virtual timer source, integrates the
+# commanded velocity via `astrs_sim::World`'s exact closed-form kinematics,
+# and publishes `scan` (a lidar sweep against its built-in map), `odom`
+# (the odometry estimate — exact by default; set
+# ASTRS_SIM_ODOM_NOISE_SIGMA to see it drift from ground truth) and `tf`
+# (the dynamic `odom -> base_link` transform). `logger` tallies all three
+# and writes a JSON report proving the whole pipeline actually ran.
+astrs: "1"
+name: astrs-sim
+health_check_interval: 5.0
+exit_when_nodes_finish: true
+
+nodes:
+  - id: teleop
+    description: A deterministic straight-then-arc cmd_vel schedule.
+    path: ../../target/debug/astrs-sim-teleop
+    build: cargo build -p astrs-sim
+    inputs:
+      # Both `teleop` and `sim` key off this same 50ms (20Hz) virtual
+      # timer source — "ticks in lockstep from a timer input" (§5.3) means
+      # exactly this: one shared clock, not two independently-scheduled
+      # loops that merely run at similar rates.
+      tick: astrs/timer/millis/50
+    outputs: [cmd_vel]
+    output_types:
+      cmd_vel: "std/geometry/v1/Twist"
+    env:
+      ASTRS_SIM_TELEOP_TICKS: 400
+
+  - id: sim
+    description: Deterministic differential-drive kinematics, a lidar sweep, and odometry.
+    path: ../../target/debug/astrs-sim-node
+    build: cargo build -p astrs-sim
+    inputs:
+      tick: astrs/timer/millis/50
+      cmd_vel:
+        source: teleop/cmd_vel
+        queue_size: 8
+    outputs: [odom, scan, tf]
+    output_types:
+      odom: "std/nav/v1/Odometry"
+      scan: "std/sensor/v1/LaserScan"
+      tf: "std/geometry/v1/Transform"
+    input_types:
+      cmd_vel: "std/geometry/v1/Twist"
+    env:
+      ASTRS_SIM_TICKS: 400
+      ASTRS_SIM_SEED: 42
+      ASTRS_SIM_ODOM_NOISE_SIGMA: 0.0
+
+  - id: logger
+    description: Tallies odom/scan/tf and writes a JSON report.
+    path: ../../target/debug/astrs-sim-logger
+    build: cargo build -p astrs-sim
+    inputs:
+      odom:
+        source: sim/odom
+        queue_size: 32
+      scan:
+        source: sim/scan
+        queue_size: 32
+      tf:
+        source: sim/tf
+        queue_size: 32
+    input_types:
+      odom: "std/nav/v1/Odometry"
+      scan: "std/sensor/v1/LaserScan"
+      tf: "std/geometry/v1/Transform"

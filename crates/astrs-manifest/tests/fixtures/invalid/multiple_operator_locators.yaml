@@ -1,0 +1,7 @@
+nodes:
+  - id: host
+    operators:
+      - id: detect
+        operator: YoloDetector
+        dylib: ./libyolo.so
+        wasm: ./yolo.wasm

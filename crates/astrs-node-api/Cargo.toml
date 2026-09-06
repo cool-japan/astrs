@@ -1,0 +1,59 @@
+[package]
+name = "astrs-node-api"
+description = "The AstRS node API: handshake, typed pub/sub, zero-copy allocation and event streams."
+documentation = "https://docs.rs/astrs-node-api"
+readme = "README.md"
+keywords = ["astrs", "node", "api", "robotics", "dataflow"]
+categories = ["science::robotics", "api-bindings", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+# ---------------------------------------------------------------------------
+# `arrow-interop` (blueprint §6.1, §9.1) — default OFF, exactly as it is on
+# `astrs-data`. It adds nothing to this crate's own dependency list: it only
+# forwards to `astrs-data`'s feature of the same name, which is what pulls
+# arrow-rs in. Keeping the arrow-rs edge inside `astrs-data` alone is a
+# deliberate constraint the workspace's `deny.toml` enforces (its `arrow-*`
+# bans re-admit those crates through a `wrappers` list naming `astrs-data`
+# and nothing else); `src/output/arrow.rs`'s module docs explain what that
+# costs the `send_arrow` signature and why the cost is worth paying.
+# ---------------------------------------------------------------------------
+[features]
+arrow-interop = ["astrs-data/arrow-interop"]
+
+[dependencies]
+astrs-data = { workspace = true }
+astrs-log = { workspace = true }
+astrs-scheduler = { workspace = true }
+astrs-shm = { workspace = true }
+astrs-time = { workspace = true }
+astrs-transport = { workspace = true }
+astrs-wire = { workspace = true }
+rustix = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+# The end-to-end zero-copy test (`tests/zero_copy_e2e.rs`) drives a *real*
+# daemon in-process rather than the mock, because the §6.3 handshake is a
+# conversation between three parties and a mock that answers for two of them
+# proves nothing about the third. Dev-only, and acyclic: `astrs-daemon` does
+# not depend on this crate (only `astrs-runtime` does).
+[dev-dependencies]
+astrs-daemon = { path = "../astrs-daemon" }
+astrs-manifest = { path = "../astrs-manifest" }

@@ -1,0 +1,35 @@
+# ros2-talker-bridge — the self-hosted DDS talker half of blueprint §10.5's
+# declarative bridge (§5.4).
+#
+#   cargo build -p ros2-talker-bridge
+#   astrs run examples/ros2-talker-bridge/dataflow.yml
+#
+# `path:` is relative to this file's directory, as every other example's is
+# — see hello-timer's own manifest comment for why.
+#
+# This manifest is deliberately *just* the talker: a self-hosted loopback
+# RTPS participant publishing `sensor_msgs/msg/LaserScan` on `/scan`, so
+# this example needs no external ROS 2 install and `astrs run` on this file
+# alone genuinely finishes (`exit_when_nodes_finish: true`).
+#
+# The other half — bridging that topic into the AstRS graph through a real
+# `ros2:` block and `bins/astrs-ros2-bridge-node` — lives in this
+# directory's own `bridge.yml`, on purpose kept out of *this* file: a
+# `ros2:`-sourced node has no `path:`/`build:` to give (§8.3's source list),
+# and a bridge has no natural finish condition to wait for either (it runs
+# until stopped, like any deployed bridge) — neither fact belongs on a
+# manifest whose whole point is a command that exits cleanly on its own.
+# See the README for the full two-manifest walkthrough and why this split
+# exists.
+astrs: "1"
+name: ros2-talker-bridge
+health_check_interval: 5.0
+exit_when_nodes_finish: true
+
+nodes:
+  - id: talker
+    description: Publishes sensor_msgs/msg/LaserScan on /scan via a self-hosted Ros2Node.
+    path: ../../target/debug/ros2-talker
+    build: cargo build -p ros2-talker-bridge
+    env:
+      ROS2_TALKER_SCANS: 15

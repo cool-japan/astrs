@@ -1,0 +1,10 @@
+nodes:
+  - id: pipeline
+    operators:
+      - id: crop
+        operator: CropOperator
+      - id: nms
+        operator: NmsOperator
+        inputs:
+          boxes: crop/boxes
+        outputs: [detections]

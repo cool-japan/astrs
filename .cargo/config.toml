@@ -1,0 +1,10 @@
+# Wires up the `cargo xtask <command>` invocation every module under `xtask/src/`
+# documents itself as using (including in at least one user-facing error message,
+# `schema.rs`'s "regenerate with `cargo xtask schema`") and that `astrs.md`/`TODO.md`'s
+# release process assumes -- the standard "cargo xtask" pattern
+# (https://github.com/matklad/cargo-xtask) this repository's own `xtask/src/main.rs`
+# doc comment names itself after. `--quiet` matches `scripts/ci-local.sh`'s own
+# `cargo run --quiet -p xtask --` invocation, so the two ways of running it (this alias,
+# and the CI-local script) produce identical output framing.
+[alias]
+xtask = "run --quiet --package xtask --"

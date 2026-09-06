@@ -1,0 +1,24 @@
+[package]
+name = "astrs-fuzz"
+description = "Pure-Rust, env-gated deep-fuzz estate for the four attack-surface decoders (blueprint §15)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "astrs_fuzz"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+astrs-cdr = { workspace = true }
+astrs-data = { workspace = true }
+astrs-rtps = { workspace = true }
+astrs-wire = { workspace = true }

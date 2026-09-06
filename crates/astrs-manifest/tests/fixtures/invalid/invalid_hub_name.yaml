@@ -1,0 +1,3 @@
+nodes:
+  - id: detector
+    hub: Yolo_Detector@v0.3.1

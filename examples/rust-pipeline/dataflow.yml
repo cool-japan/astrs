@@ -1,0 +1,69 @@
+# rust-pipeline — the canonical typed graph of blueprint §8.1.
+#
+#   cargo build -p rust-pipeline
+#   astrs validate examples/rust-pipeline/dataflow.yml
+#   astrs run      examples/rust-pipeline/dataflow.yml
+#
+# Every edge carries a type URN (§8.3), so `astrs validate` type-checks the
+# graph before anything is spawned and each node decodes into a Rust struct.
+astrs: "1"
+name: rust-pipeline
+health_check_interval: 5.0
+exit_when_nodes_finish: true
+
+nodes:
+  - id: camera-sim
+    description: Publishes synthetic RGB frames, one per timer tick.
+    path: ../../target/debug/camera-sim
+    build: cargo build -p rust-pipeline
+    inputs:
+      tick: astrs/timer/hz/20
+    outputs: [frames]
+    output_types:
+      frames: "std/media/v1/Image[pixel=rgb8]"
+    env:
+      PIPELINE_FRAMES: 12
+
+  - id: detector-sim
+    description: Turns each frame into detections.
+    path: ../../target/debug/detector-sim
+    build: cargo build -p rust-pipeline
+    inputs:
+      # The long input form (§8.3): a bounded queue with an explicit loss
+      # policy, which is how a perception stage that falls behind stays
+      # bounded (§11.2).
+      frames:
+        source: camera-sim/frames
+        queue_size: 2
+        queue_policy: drop_oldest
+    input_types:
+      frames: "std/media/v1/Image[pixel=rgb8]"
+    outputs: [detections]
+    output_types:
+      detections: "std/vision/v1/Detections"
+    # §12: a detector that dies is worth restarting a few times; a detector
+    # that dies five times is a bug, and the graph should say so.
+    restart_policy: on_failure
+    max_restarts: 5
+
+  - id: recorder-sim
+    description: Counts both streams and writes a JSON tally.
+    # §8.1 writes this node as `record: [camera/frames, detector/detections]`,
+    # which expands to `astrs-record-node` and a `.arec` file (§14). This
+    # example keeps that shape with an ordinary `path:` node so the graph is
+    # three real processes and the tally is a file a test can read today.
+    path: ../../target/debug/recorder-sim
+    build: cargo build -p rust-pipeline
+    inputs:
+      # A tally must not lose anything, so the recorder's queues are deep
+      # enough for the whole run — unlike the detector's, which declares a
+      # lossy policy on purpose.
+      frames:
+        source: camera-sim/frames
+        queue_size: 32
+      detections:
+        source: detector-sim/detections
+        queue_size: 32
+    input_types:
+      frames: "std/media/v1/Image[pixel=rgb8]"
+      detections: "std/vision/v1/Detections"

@@ -1,0 +1,14 @@
+# Sub-millisecond and fractional timer edge cases: AstRS's timer virtual
+# sources are millis/secs/hz only, and hz is integer-valued -- dora accepts
+# micros/nanos units and fractional hz. None of these are representable
+# losslessly, so each must be approximated with a note, never dropped or
+# left as an out-of-range/zero value.
+nodes:
+  - id: fast-source
+    path: ./fast-source
+    inputs:
+      fast_tick: dora/timer/micros/700
+      slow_tick: dora/timer/nanos/2300000
+      fractional_hz: dora/timer/hz/0.5
+    outputs:
+      - data

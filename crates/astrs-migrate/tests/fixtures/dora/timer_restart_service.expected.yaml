@@ -1,0 +1,26 @@
+# Migrated from a dora-rs dataflow descriptor by `astrs migrate from-dora`.
+# No unmapped constructs were found.
+
+nodes:
+- id: service-client
+  path: ../../target/debug/service-example-client
+  build: cargo build -p service-example-client
+  inputs:
+    response: service-server/response
+    tick: astrs/timer/millis/500
+  outputs:
+  - request
+  pattern: service-client
+  restart_policy: on_failure
+  max_restarts: 3
+  restart_delay: 0.5
+- id: service-server
+  path: ../../target/debug/service-example-server
+  build: cargo build -p service-example-server
+  inputs:
+    request: service-client/request
+  outputs:
+  - response
+  pattern: service-server
+  restart_policy: always
+  health_check_timeout: 2.0

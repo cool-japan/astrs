@@ -1,0 +1,4 @@
+nodes:
+  - id: from-rev
+    git: https://example.com/repo.git
+    rev: 4f9c2ab

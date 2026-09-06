@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>builtin_interfaces</name>
+  <version>1.2.1</version>
+  <description>
+    Common interfaces for building blocks of other interfaces, such as Time.
+  </description>
+  <maintainer email="ros2-team@example.com">ROS 2 team</maintainer>
+  <license>Apache-2.0</license>
+</package>

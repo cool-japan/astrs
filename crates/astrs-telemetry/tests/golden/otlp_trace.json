@@ -1,0 +1,75 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "astrs-daemon"
+            }
+          },
+          {
+            "key": "service.instance.id",
+            "value": {
+              "stringValue": "host-1"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "astrs-telemetry",
+            "version": "0.1.0"
+          },
+          "spans": [
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba902b7",
+              "name": "publish",
+              "kind": 1,
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000000002000000",
+              "attributes": [
+                {
+                  "key": "output",
+                  "value": {
+                    "stringValue": "image"
+                  }
+                },
+                {
+                  "key": "astrs.dataflow_id",
+                  "value": {
+                    "stringValue": "01020304-0506-0708-090a-0b0c0d0e0f10"
+                  }
+                },
+                {
+                  "key": "astrs.node_id",
+                  "value": {
+                    "stringValue": "camera"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "b7ad6b7169203331",
+              "parentSpanId": "00f067aa0ba902b7",
+              "name": "deliver",
+              "kind": 1,
+              "startTimeUnixNano": "1700000000001000000",
+              "endTimeUnixNano": "1700000000003000000",
+              "status": {
+                "code": 2
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

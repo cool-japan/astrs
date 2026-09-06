@@ -1,0 +1,20 @@
+[package]
+name = "__ASTRS_PROJECT_NAME__"
+version = "0.1.0"
+edition = "2024"
+description = "An AstRS dylib-hosted operator, scaffolded by `astrs new operator-dylib`."
+
+[lib]
+# A dylib operator is loaded, never linked: `cdylib` is what `dlopen`/
+# `LoadLibrary` can open, and the plain `lib` target keeps this crate usable
+# from its own doctests and any Rust code that wants to unit-test the
+# `Operator` impl directly (`cargo test` never touches the `cdylib`).
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+# Depends on `astrs-operator-api` directly, not the `astrs` facade: the
+# facade's `operator` feature reaches the `Operator` trait but not
+# `export_dylib_operator!`, which lives only on `astrs-operator-api`'s own
+# `dylib` feature.
+astrs-operator-api = { version = "0.1", features = ["dylib"] }
+astrs-wire = "0.1"

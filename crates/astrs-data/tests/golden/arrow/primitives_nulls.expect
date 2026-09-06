@@ -1,0 +1,129 @@
+schema fields=14
+field 0 name=b type=bool nullable=1
+field 1 name=i8 type=i8 nullable=1
+field 2 name=i16 type=i16 nullable=1
+field 3 name=i32 type=i32 nullable=1
+field 4 name=i64 type=i64 nullable=1
+field 5 name=u8 type=u8 nullable=1
+field 6 name=u16 type=u16 nullable=1
+field 7 name=u32 type=u32 nullable=1
+field 8 name=u64 type=u64 nullable=1
+field 9 name=f16 type=f16 nullable=1
+field 10 name=f32 type=f32 nullable=1
+field 11 name=f64 type=f64 nullable=1
+field 12 name=ts type=timestamp(ns) nullable=1
+field 13 name=dur type=duration(ns) nullable=1
+batch 0 rows=7 cols=14
+col 0 nulls=2
+r0 T
+r1 -
+r2 T
+r3 F
+r4 -
+r5 F
+r6 T
+col 1 nulls=2
+r0 -100
+r1 -
+r2 -86
+r3 -79
+r4 -
+r5 -65
+r6 -58
+col 2 nulls=2
+r0 -30000
+r1 -
+r2 -28000
+r3 -27000
+r4 -
+r5 -25000
+r6 -24000
+col 3 nulls=2
+r0 -2000000000
+r1 -
+r2 -1999800000
+r3 -1999700000
+r4 -
+r5 -1999500000
+r6 -1999400000
+col 4 nulls=2
+r0 -4611686018427387903
+r1 -
+r2 -4611686016427387889
+r3 -4611686015427387882
+r4 -
+r5 -4611686013427387868
+r6 -4611686012427387861
+col 5 nulls=2
+r0 0
+r1 -
+r2 74
+r3 111
+r4 -
+r5 185
+r6 222
+col 6 nulls=2
+r0 0
+r1 -
+r2 8198
+r3 12297
+r4 -
+r5 20495
+r6 24594
+col 7 nulls=2
+r0 0
+r1 -
+r2 1013904226
+r3 3668339987
+r4 -
+r5 387276917
+r6 3041712678
+col 8 nulls=2
+r0 0
+r1 -
+r2 4354685564936845354
+r3 15755400384260043839
+r4 -
+r5 1663341875487337577
+r6 13064056694810536062
+col 9 nulls=2
+r0 hbc00
+r1 -
+r2 h0000
+r3 h3800
+r4 -
+r5 h3e00
+r6 h4000
+col 10 nulls=2
+r0 sc0500000
+r1 -
+r2 sbe800000
+r3 s3fa00000
+r4 -
+r5 s40880000
+r6 s40b80000
+col 11 nulls=2
+r0 d3fc0000000000000
+r1 -
+r2 dc013800000000000
+r3 dc01d800000000000
+r4 -
+r5 dc028c00000000000
+r6 dc02dc00000000000
+col 12 nulls=2
+r0 1700000000000000000
+r1 -
+r2 1700000000002000074
+r3 1700000000003000111
+r4 -
+r5 1700000000005000185
+r6 1700000000006000222
+col 13 nulls=2
+r0 17
+r1 -
+r2 -999983
+r3 -1499983
+r4 -
+r5 -2499983
+r6 -2999983
+end

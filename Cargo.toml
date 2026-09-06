@@ -1,0 +1,346 @@
+[workspace]
+resolver = "3"
+members = [
+    # Layer 1 — Substrate
+    "crates/astrs-wire",
+    "crates/astrs-time",
+    "crates/astrs-data",
+    "crates/astrs-shm",
+    "crates/astrs-transport",
+    "crates/astrs-discovery",
+    "crates/astrs-store",
+    "crates/astrs-yaml",
+    # Layer 2 — Domain libraries
+    "crates/astrs-manifest",
+    "crates/astrs-graph",
+    "crates/astrs-scheduler",
+    "crates/astrs-recording",
+    "crates/astrs-telemetry",
+    "crates/astrs-log",
+    "crates/astrs-verify",
+    "crates/astrs-migrate",
+    "crates/astrs-raft",
+    # Layer 3 — Orchestration & execution
+    "crates/astrs-daemon",
+    "crates/astrs-coordinator",
+    "crates/astrs-runtime",
+    "crates/astrs-node-api",
+    "crates/astrs-operator-api",
+    "crates/astrs-operator-macros",
+    # Layer 2 — ROS 2 interop pillar
+    "crates/astrs-cdr",
+    "crates/astrs-rtps",
+    "crates/astrs-idl",
+    "crates/astrs-ros2",
+    "crates/astrs-rosbag",
+    "crates/astrs-tf",
+    "crates/astrs-urdf",
+    # Layer 4 — Interfaces
+    "crates/astrs-tui",
+    "crates/astrs",
+    "crates/astrs-capi",
+    "crates/astrs-nodes-signal",
+    "crates/astrs-nodes-vision",
+    "crates/astrs-sim",
+    # Example dataflows (§5.4) — each a tiny member crate with a manifest
+    "examples/hello-timer",
+    "examples/rust-pipeline",
+    "examples/service-roundtrip",
+    "examples/shm-zero-copy-probe",
+    "examples/record-replay",
+    "examples/multi-daemon-cluster",
+    "examples/restart-policies",
+    "examples/error-propagation",
+    "examples/benchmark-latency",
+    "examples/action-progress",
+    "examples/streaming-segments",
+    "examples/log-aggregation",
+    "examples/dynamic-add-remove",
+    "examples/typed-vs-any",
+    "examples/module-composition",
+    "examples/tui-showcase",
+    "examples/ros2-talker-bridge",
+    "examples/ros2-native-listener",
+    "examples/rosbag-reader",
+    "examples/tf-broadcast",
+    # Conformance suite (§20.3)
+    "tests/conformance",
+    # Pure-Rust deep-fuzz estate (§15) — env-gated structured fuzzing with
+    # committed regression corpora; cargo-fuzz/libfuzzer is excluded outright
+    # by the Pure Rust policy (§18.1) because it links a C++ runtime.
+    "tests/fuzz",
+    # Criterion latency-ladder bench estate (§20.4)
+    "benches/astrs-benches",
+    # Binaries
+    "bins/astrs-cli",
+    "bins/astrs-ros2-bridge-node",
+    "bins/astrs-record-node",
+    "bins/astrs-replay-node",
+    # Repository automation
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+authors = ["COOLJAPAN OU (Team Kitasan)"]
+repository = "https://github.com/cool-japan/astrs"
+homepage = "https://github.com/cool-japan/astrs"
+
+[workspace.dependencies]
+# ---------------------------------------------------------------------------
+# Intra-workspace crates — dual-pinned (path for development, version for
+# crates.io). Members reference these with `*.workspace = true` only.
+# ---------------------------------------------------------------------------
+astrs = { path = "crates/astrs", version = "0.1.0" }
+astrs-capi = { path = "crates/astrs-capi", version = "0.1.0" }
+astrs-cdr = { path = "crates/astrs-cdr", version = "0.1.0" }
+astrs-cli = { path = "bins/astrs-cli", version = "0.1.0" }
+astrs-coordinator = { path = "crates/astrs-coordinator", version = "0.1.0" }
+astrs-daemon = { path = "crates/astrs-daemon", version = "0.1.0" }
+astrs-data = { path = "crates/astrs-data", version = "0.1.0" }
+astrs-discovery = { path = "crates/astrs-discovery", version = "0.1.0" }
+astrs-graph = { path = "crates/astrs-graph", version = "0.1.0" }
+astrs-idl = { path = "crates/astrs-idl", version = "0.1.0" }
+astrs-log = { path = "crates/astrs-log", version = "0.1.0" }
+astrs-manifest = { path = "crates/astrs-manifest", version = "0.1.0" }
+astrs-migrate = { path = "crates/astrs-migrate", version = "0.1.0" }
+astrs-node-api = { path = "crates/astrs-node-api", version = "0.1.0" }
+astrs-nodes-signal = { path = "crates/astrs-nodes-signal", version = "0.1.0" }
+astrs-nodes-vision = { path = "crates/astrs-nodes-vision", version = "0.1.0" }
+astrs-operator-api = { path = "crates/astrs-operator-api", version = "0.1.0" }
+astrs-operator-macros = { path = "crates/astrs-operator-macros", version = "0.1.0" }
+astrs-raft = { path = "crates/astrs-raft", version = "0.1.0" }
+astrs-record-node = { path = "bins/astrs-record-node", version = "0.1.0" }
+astrs-recording = { path = "crates/astrs-recording", version = "0.1.0" }
+astrs-ros2 = { path = "crates/astrs-ros2", version = "0.1.0" }
+astrs-rosbag = { path = "crates/astrs-rosbag", version = "0.1.0" }
+astrs-rtps = { path = "crates/astrs-rtps", version = "0.1.0" }
+astrs-runtime = { path = "crates/astrs-runtime", version = "0.1.0" }
+astrs-scheduler = { path = "crates/astrs-scheduler", version = "0.1.0" }
+astrs-shm = { path = "crates/astrs-shm", version = "0.1.0" }
+astrs-sim = { path = "crates/astrs-sim", version = "0.1.0" }
+astrs-store = { path = "crates/astrs-store", version = "0.1.0" }
+astrs-telemetry = { path = "crates/astrs-telemetry", version = "0.1.0" }
+astrs-tf = { path = "crates/astrs-tf", version = "0.1.0" }
+astrs-time = { path = "crates/astrs-time", version = "0.1.0" }
+astrs-transport = { path = "crates/astrs-transport", version = "0.1.0" }
+astrs-tui = { path = "crates/astrs-tui", version = "0.1.0" }
+astrs-urdf = { path = "crates/astrs-urdf", version = "0.1.0" }
+astrs-verify = { path = "crates/astrs-verify", version = "0.1.0" }
+astrs-wire = { path = "crates/astrs-wire", version = "0.1.0" }
+astrs-yaml = { path = "crates/astrs-yaml", version = "0.1.0" }
+
+# ---------------------------------------------------------------------------
+# Examples and the conformance suite (§5.4, §20.3) — `publish = false`
+# members, so they are path-only: nothing on crates.io ever refers to them.
+# ---------------------------------------------------------------------------
+action-progress = { path = "examples/action-progress" }
+astrs-conformance = { path = "tests/conformance" }
+benchmark-latency = { path = "examples/benchmark-latency" }
+dynamic-add-remove = { path = "examples/dynamic-add-remove" }
+error-propagation = { path = "examples/error-propagation" }
+hello-timer = { path = "examples/hello-timer" }
+log-aggregation = { path = "examples/log-aggregation" }
+module-composition = { path = "examples/module-composition" }
+multi-daemon-cluster = { path = "examples/multi-daemon-cluster" }
+record-replay = { path = "examples/record-replay" }
+restart-policies = { path = "examples/restart-policies" }
+ros2-native-listener = { path = "examples/ros2-native-listener" }
+ros2-talker-bridge = { path = "examples/ros2-talker-bridge" }
+rosbag-reader = { path = "examples/rosbag-reader" }
+rust-pipeline = { path = "examples/rust-pipeline" }
+service-roundtrip = { path = "examples/service-roundtrip" }
+shm-zero-copy-probe = { path = "examples/shm-zero-copy-probe" }
+streaming-segments = { path = "examples/streaming-segments" }
+tf-broadcast = { path = "examples/tf-broadcast" }
+tui-showcase = { path = "examples/tui-showcase" }
+typed-vs-any = { path = "examples/typed-vs-any" }
+
+# ---------------------------------------------------------------------------
+# COOLJAPAN ecosystem — released crates.io versions only, never path deps
+# (blueprint §19.1). Bumping any of these is a deliberate, recorded change.
+# ---------------------------------------------------------------------------
+oxiarc-deflate = { version = "0.4.1" }
+oxiarc-lz4 = { version = "0.4.1" }
+oxiarc-zstd = { version = "0.4.1" }
+oxicode = { version = "0.2.6" }
+oxicode_derive = { version = "0.2.6" }
+oxicrypto = { version = "0.3.0" }
+oxifft = { version = "0.4.2" }
+oxihttp = { version = "0.2.1" }
+oxiquic = { version = "0.2.1" }
+# Companion crate of `oxisql-sqlite-compat` (its `Connection`/`Value`/`Row`/
+# `ToSqlValue` vocabulary lives here) — same "pinned crate's required
+# companion" precedent as `oxicode_derive` above; not itself a §19.1 table
+# row because the table names the backend, not its trait crate.
+oxisql-core = { version = "0.4.1" }
+oxisql-sqlite-compat = { version = "0.4.1" }
+oxistore-core = { version = "0.3.0" }
+oxistore-kv-redb = { version = "0.3.0" }
+# Diet configuration: `std` alone gives the full TermManager/Solver/QF_LIA surface
+# astrs-verify uses, with zero rhai/smartstring (MPL-2.0) in the license graph.
+# 0.3.3 is consumed from GitHub via [patch.crates-io] below until the tier is on crates.io.
+oxiz = { version = "0.3.3", default-features = false, features = ["std"] }
+# Drop-in quick_xml replacement (package rename keeps call sites idiomatic
+# while the real dependency stays inside the COOLJAPAN pure-Rust XML stack).
+quick-xml = { package = "oxixml-quickxml-compat", version = "0.1.2" }
+
+# ---------------------------------------------------------------------------
+# Retained external crates (blueprint §18.1 closed list). Anything not listed
+# here needs a governance decision before a wave may use it.
+# ---------------------------------------------------------------------------
+# Not called by AstRS. `oxicrypto-hash`/`-mac` depend on blake3 whose default
+# build compiles C SIMD kernels (blake3_neon.c / *.S) via `cc`; feature
+# unification lets us force its `pure` (Rust-only) mode from here, keeping the
+# whole tree C/C++-free in every feature combination (blueprint §18.1).
+blake3 = { version = "1.8.6", default-features = false, features = ["pure"] }
+clap = { version = "4.6.6", features = ["derive", "env", "string"] }
+clap_complete = { version = "4.6.9" }
+criterion = { version = "0.8.2" }
+crossterm = { version = "0.29.0" }
+glob = { version = "0.3.4" }
+heck = { version = "0.5.0" }
+# Safe wrapper around the platform's own `dlopen`/`LoadLibrary` — FFI
+# *declarations* to a platform service, never compiled C (no build script, no
+# `cc`; §18.1's "FFI declarations to platform services are acceptable" line).
+# Backs `astrs-runtime`'s `dylib-operators` feature.
+libloading = { version = "0.9.0" }
+prettyplease = { version = "0.3.0" }
+proc-macro-crate = { version = "3.5.0" }
+proc-macro2 = { version = "1.0.107" }
+proptest = { version = "1.11.0" }
+quote = { version = "1.0.47" }
+ratatui = { version = "0.30.2" }
+regex = { version = "1.13.1" }
+rustix = { version = "1.1.4", features = [
+    "fs",
+    "mm",
+    "net",
+    "process",
+    "event",
+    "time",
+    # `rustix::thread::{CpuSet, sched_setaffinity, sched_getaffinity}` — §11.3
+    # `cpu_affinity` application at spawn (astrs-daemon/src/spawn). Linux-only
+    # at the syscall level (see that module's docs); harmless elsewhere.
+    "thread",
+] }
+schemars = { version = "1.2.2" }
+semver = { version = "1.0.28", features = ["serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151" }
+serde_yaml = { version = "0.9.34" }
+shlex = { version = "2.0.1" }
+syn = { version = "3.0.3", features = ["full"] }
+thiserror = { version = "2.0.20" }
+tokio = { version = "1.53.1", features = ["full"] }
+toml = { version = "1.1.4" }
+tracing = { version = "0.1.44" }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+uuid = { version = "1.24.1", features = ["v7", "serde"] }
+# Pure-Rust WebAssembly *interpreter* (no JIT, no cranelift, no C) backing
+# `astrs-runtime`'s `wasm-operators` feature. 1.1.0 is the latest **stable**
+# release: crates.io's `max_version` is 2.0.0-beta.10, a pre-release, which a
+# shipping 0.1.0 workspace deliberately does not take (cargo's own resolver
+# skips it too). `default-features = false` drops wasmi's `wat` default, which
+# would otherwise pull the `wat` text-format parser into every release build of
+# the runtime; `.wat` text is a *test* convenience only, so `wat` is a
+# dev-dependency of `astrs-runtime` instead. `std` is the one feature kept:
+# `Engine`/`Store`/`Module::new`/`Linker` all live behind it.
+wasmi = { version = "1.1.0", default-features = false, features = ["std"] }
+# Dev-only (bytecodealliance, pure Rust): compiles `.wat` test fixtures to the
+# `.wasm` bytes `wasmi::Module::new` consumes, so wasm-operator tests carry
+# readable text modules instead of hex blobs.
+wat = { version = "1.257.1" }
+# Named file mappings for the Windows shared-memory plane
+# (`CreateFileMappingW`/`MapViewOfFile`/`OpenFileMappingW` +
+# `SECURITY_ATTRIBUTES`), the Windows counterpart of the `rustix` `mm`/`fs`
+# surface used on Unix. Bindgen'd ABI declarations only — no C is compiled, and
+# `xtask`'s `*-sys` sweep already carries `windows-sys` in its hand-verified
+# allowlist for exactly that reason.
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_Security",
+] }
+
+# ---------------------------------------------------------------------------
+# Arrow interop (blueprint §6.1's `astrs-data` `arrow-interop` feature,
+# default OFF). Optional-use only: no member activates these by default, and
+# `astrs-data` is the sole crate allowed to depend on them (deny.toml's
+# `[bans].deny` arrow entries carry a `wrappers = ["astrs-data"]` exception
+# naming it the sole sanctioned consumer). `default-features = false` with no
+# extra features on every entry — none of the four has a non-empty default
+# feature set upstream, but pinning it explicitly keeps a future arrow-rs
+# release from silently pulling in `ffi` (which drags `libc`-based FFI glue),
+# `chrono-tz`, `pool` or (`arrow-schema`) `canonical_extension_types`/`serde`.
+# Pure Rust: `ring` is absent from the workspace graph entirely (`cargo tree
+# --features astrs-data/arrow-interop --target all -i ring` errors "did not
+# match any packages" rather than printing anything). `cc` is *not* absent
+# once this feature is on: `arrow-array`'s required (non-optional, so
+# `default-features = false` above does not touch it) `chrono` dependency
+# carries the same `iana-time-zone` -> `iana-time-zone-haiku` -> `cc` chain
+# deny.toml's `cc` ban entry already whitelists for `astrs-rosbag`'s
+# unrelated `chrono` usage (see deny.toml's own comment on that entry) — this
+# feature adds a second, parallel route to a `cc` parent already covered by
+# that same wrapper, not a new one, so no deny.toml change is required for
+# `cc` itself; verified with `cargo tree -p astrs-data --features
+# arrow-interop --target all -i cc`. Version 59.2.0 is both "latest on
+# crates.io" (COOLJAPAN policy) and the exact release the `tests/golden/arrow`
+# corpus (blueprint risk register §23 #1) was generated against.
+# ---------------------------------------------------------------------------
+arrow-array = { version = "59.2.0", default-features = false }
+arrow-buffer = { version = "59.2.0", default-features = false }
+arrow-data = { version = "59.2.0", default-features = false }
+arrow-schema = { version = "59.2.0", default-features = false }
+
+[workspace.lints.rust]
+# astrs-shm and astrs-data map raw memory and hand-decode Arrow buffers; the
+# unsafe they need is reviewed per call site, not banned wholesale.
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+# ---------------------------------------------------------------------------
+# Release profile (blueprint §20/§22 release gate). Untuned by measurement —
+# there is nothing to measure yet at 0.1.0 — these are the standard safe
+# defaults for a workspace this size (34 members), not a benchmarked choice:
+# `lto = "thin"` gets most of fat LTO's cross-crate-inlining win at a link
+# time that scales far better across that many crates; `codegen-units = 1`
+# maximizes optimization opportunity within each crate at the cost of
+# parallel codegen, an acceptable trade for a release build (not the inner
+# dev loop, which stays on the unprofiled dev profile); `strip = "symbols"`
+# drops debug/symbol info from the shipped binaries; `opt-level = 3` is
+# already Cargo's own release default, pinned explicitly so it reads as a
+# deliberate part of this profile rather than an implicit default a future
+# edit here could silently change.
+# ---------------------------------------------------------------------------
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+opt-level = 3
+
+# ---------------------------------------------------------------------------
+# Pure Rust policy patch (blueprint §18.1; COOLJAPAN Pure Rust Policy).
+# ---------------------------------------------------------------------------
+# `criterion` (a plain `[dev-dependencies]` entry of `benches/astrs-benches` and of several
+# crates' own micro-benchmarks) depends unconditionally on `alloca` 0.4.0, whose upstream
+# `build.rs` compiles a small C shim via `cc::Build` with no feature to opt out -- `cc` would
+# otherwise be invoked, and real C compiled, on every `cargo test`/`cargo bench`/`cargo deny`
+# pass over those crates' dev-dependencies. `patches/alloca-0.4.0` is a byte-for-byte
+# reimplementation of upstream's public API in Pure Rust (heap-backed instead of stack-backed;
+# see its own doc comment for why that substitution is contract-preserving for `criterion`'s
+# use), carrying no `build.rs` and no `cc`/`cmake` build-dependency. This is the identical fix
+# already applied for the same upstream defect in the COOLJAPAN `scirs` workspace.
+[patch.crates-io]
+alloca = { path = "patches/alloca-0.4.0" }

@@ -1,0 +1,54 @@
+[package]
+name = "astrs-data"
+description = "Arrow-IPC-compatible columnar arrays, aligned buffers, schema hashing and kernels for AstRS."
+documentation = "https://docs.rs/astrs-data"
+readme = "README.md"
+keywords = ["astrs", "arrow", "columnar", "robotics", "ipc"]
+categories = ["science::robotics", "encoding", "data-structures"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+# arrow-interop only (blueprint §6.1): zero-copy From/TryFrom between this
+# crate's arrays and arrow-rs 59 arrays, feature default OFF. See
+# `src/interop/mod.rs`. `astrs-data` is the sole workspace member allowed to
+# depend on these four (deny.toml's arrow ban entries carry a
+# `wrappers = ["astrs-data"]` exception naming it).
+arrow-array = { workspace = true, optional = true }
+arrow-buffer = { workspace = true, optional = true }
+arrow-data = { workspace = true, optional = true }
+arrow-schema = { workspace = true, optional = true }
+
+[features]
+# Default OFF (blueprint §6.1). Pulls arrow-rs into the dependency tree only
+# when a downstream crate opts in explicitly.
+arrow-interop = [
+    "dep:arrow-array",
+    "dep:arrow-buffer",
+    "dep:arrow-data",
+    "dep:arrow-schema",
+]
+
+[dev-dependencies]
+proptest = { workspace = true }
+serde_json = { workspace = true }
+# The §20.4 latency-ladder bench estate (blueprint §20.4, §5.2). No §20.4
+# gate targets this crate directly; see `benches/kernels.rs`'s header.
+criterion = { workspace = true }
+
+[[bench]]
+name = "kernels"
+harness = false
+# See `astrs-shm/Cargo.toml`'s identical note: keeps `cargo test`/nextest
+# from also building and running the bench.
+test = false
+
+[lints]
+workspace = true

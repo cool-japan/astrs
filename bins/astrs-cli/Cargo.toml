@@ -1,0 +1,95 @@
+[package]
+name = "astrs-cli"
+description = "The astrs command line: run, build, monitor, migrate and bridge robotic dataflows."
+documentation = "https://docs.rs/astrs-cli"
+readme = "README.md"
+keywords = ["astrs", "cli", "robotics", "dataflow", "middleware"]
+categories = ["science::robotics", "command-line-utilities"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "astrs_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "astrs"
+path = "src/main.rs"
+# The binary is a thin `main` over `astrs_cli`, and its rustdoc output would
+# collide with the `astrs` facade crate's (both render to `doc/astrs/`).
+# The documentation a reader wants is the library's; the CLI's is its `--help`.
+doc = false
+
+# `run_e2e` re-executes its own test binary as the dataflow's nodes, so `main`
+# must claim the process before any test runs (see the file's `ROLE_VAR`
+# dispatch). libtest generates `main`, leaving no interception point, so this
+# target keeps a custom harness and implements the list/filter protocol that
+# `cargo test` and `cargo nextest` drive it with.
+[[test]]
+name = "run_e2e"
+harness = false
+
+[features]
+# §15: "The `verify` feature is default-enabled in the shipped `astrs` CLI
+# binary (so `--prove` works in a plain build); library consumers opt in per
+# crate." `astrs validate --prove` is a marquee feature — no incumbent has
+# it — and a marquee feature behind a non-default flag is one a user never
+# finds. `--no-default-features` still builds the CLI without the solver.
+default = ["verify"]
+# `astrs validate --prove` (blueprint §15, §17). The dependency itself is
+# unconditional: `astrs-verify` builds without its own `verify` feature and
+# still extracts the model and encodes every obligation, reporting
+# `SolverUnavailable` instead of a verdict. Only the *solving* is gated,
+# which is what lets this crate keep one dispatch path rather than two.
+verify = ["astrs-verify/verify"]
+# `astrs coordinator --ha-node-id/--ha-peer` (blueprint §22): run this
+# coordinator as one of a replicated set. Off by default, because the flags
+# only make sense for a deployment that has three coordinators to run — a
+# build without it parses them and refuses them with a clear message rather
+# than silently ignoring them.
+ha = ["astrs-coordinator/ha"]
+
+[dependencies]
+astrs-coordinator = { workspace = true }
+astrs-daemon = { workspace = true }
+astrs-data = { workspace = true }
+astrs-graph = { workspace = true }
+astrs-manifest = { workspace = true }
+astrs-migrate = { workspace = true }
+astrs-node-api = { workspace = true }
+astrs-operator-api = { workspace = true }
+astrs-recording = { workspace = true }
+astrs-rosbag = { workspace = true }
+# `astrs ros2 doctor`/`topics` (§17) spin a real probe participant: the rcl
+# layer for the graph cache, and the RTPS layer for the multicast capability
+# and the locator the probe announces itself on.
+astrs-ros2 = { workspace = true }
+astrs-rtps = { workspace = true }
+astrs-runtime = { workspace = true }
+astrs-store = { workspace = true }
+astrs-telemetry = { workspace = true }
+astrs-time = { workspace = true }
+astrs-transport = { workspace = true }
+astrs-tui = { workspace = true }
+astrs-verify = { workspace = true }
+astrs-wire = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+rustix = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+# `astrs hub`'s config file (blueprint §22): the `[hub] index = "..."` key
+# `ASTRS_HUB_INDEX` is checked ahead of (see `command::hub::resolve_index_url`).
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

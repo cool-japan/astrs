@@ -1,0 +1,6 @@
+nodes:
+  - id: consumer
+    path: ./consumer
+    inputs:
+      data:
+        source: ghost/out

@@ -1,0 +1,51 @@
+# log-aggregation — multi-node structured logs collected through the
+# daemon's `astrs/logs` virtual source (blueprint §8.4, §13).
+#
+#   cargo build -p log-aggregation
+#   astrs run examples/log-aggregation/dataflow.yml
+#
+# `path:` is relative to this file's directory (that is what `astrs run`
+# resolves node paths against), so the manifest works from any checkout
+# without an absolute path in it.
+#
+#   [sensor-a] ──┐
+#                ├──► astrs/logs ──► [aggregator]
+#   [sensor-b] ──┘
+#
+# `sensor-a`/`sensor-b` are the *same* binary (`log-worker`), each told its
+# own identity and tick cadence through `env:` — the same reuse
+# `restart-policies` uses for its own single worker binary. Neither declares
+# an `outputs:` port: the only thing either one produces is its own log
+# stream, which is why `aggregator`'s sole input is the virtual source
+# `astrs/logs` rather than an ordinary `node/output` edge (§8.4).
+astrs: "1"
+name: log-aggregation
+exit_when_nodes_finish: true
+
+nodes:
+  - id: sensor-a
+    description: Emits a deterministic, marker-tagged log line on every tick.
+    path: ../../target/debug/log-worker
+    build: cargo build -p log-aggregation
+    inputs:
+      tick: astrs/timer/millis/30
+    env:
+      LOG_WORKER_ID: sensor-a
+      LOG_WORKER_RECORDS: 6
+
+  - id: sensor-b
+    description: Emits a deterministic, marker-tagged log line on every tick, at a different cadence.
+    path: ../../target/debug/log-worker
+    build: cargo build -p log-aggregation
+    inputs:
+      tick: astrs/timer/millis/45
+    env:
+      LOG_WORKER_ID: sensor-b
+      LOG_WORKER_RECORDS: 6
+
+  - id: aggregator
+    description: Collects every marker-tagged record from astrs/logs and tallies it per node and level.
+    path: ../../target/debug/log-aggregator
+    build: cargo build -p log-aggregation
+    inputs:
+      logs: astrs/logs

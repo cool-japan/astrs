@@ -1,0 +1,24 @@
+# Fixture for `astrs-cli`'s own `expand` golden test (tests/expand_golden.rs)
+# -- a small but genuine `module:` composition, distinct from
+# `astrs-manifest`'s own two-level fixture (`tests/fixtures/modules/two_level/`):
+# this one exercises the CLI's `command::expand::run` wiring end to end
+# (read -> parse -> validate -> expand -> validate -> to_yaml -> print),
+# not the underlying expansion algorithm itself, which that crate already
+# goldens on its own.
+name: expand-golden-demo
+nodes:
+  - id: camera
+    path: ./camera
+    outputs: [frames]
+    output_types: { frames: "std/media/v1/Image" }
+
+  - id: perception
+    module: ./perception.yaml
+    inputs:
+      frames: camera/frames
+    outputs: [detections]
+
+  - id: planner
+    path: ./planner
+    inputs:
+      detections: perception/detections

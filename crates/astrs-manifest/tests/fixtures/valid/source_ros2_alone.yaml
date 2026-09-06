@@ -1,0 +1,9 @@
+nodes:
+  - id: lidar-in
+    ros2:
+      compat: humble
+      topic: /scan
+      message_type: sensor_msgs/msg/LaserScan
+      direction: to_astrs
+      qos: { reliable: true, keep_last: 10 }
+    outputs: [scan]

@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+<!--
+  A minimal 3-DoF arm, deliberately built so every forward-kinematics
+  result is hand-derivable: unit-length links along the world axes, joint
+  axes aligned to X/Y/Z, and test angles restricted to 0 and pi/2 so every
+  rotation is a quarter turn.
+
+    base_link =[j1: revolute, axis Z]=> link1
+                    origin: identity
+    link1     =[j2: revolute, axis Y]=> link2
+                    origin: xyz="1 0 0"
+    link2     =[j3: prismatic, axis X]=> link3
+                    origin: xyz="1 0 0"
+
+  See tests/three_dof_arm.rs for the independently-derived golden values
+  this fixture's forward kinematics is checked against.
+-->
+<robot name="three_dof_arm">
+  <link name="base_link">
+    <visual>
+      <geometry><cylinder radius="0.05" length="0.1"/></geometry>
+    </visual>
+  </link>
+
+  <link name="link1">
+    <inertial>
+      <mass value="1.0"/>
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
+    </inertial>
+    <visual>
+      <geometry><box size="1 0.05 0.05"/></geometry>
+    </visual>
+  </link>
+
+  <link name="link2">
+    <inertial>
+      <mass value="0.8"/>
+      <inertia ixx="0.008" ixy="0" ixz="0" iyy="0.008" iyz="0" izz="0.008"/>
+    </inertial>
+    <visual>
+      <geometry><box size="1 0.05 0.05"/></geometry>
+    </visual>
+  </link>
+
+  <link name="link3">
+    <inertial>
+      <mass value="0.3"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+    <visual>
+      <geometry><sphere radius="0.08"/></geometry>
+    </visual>
+  </link>
+
+  <joint name="j1" type="revolute">
+    <parent link="base_link"/>
+    <child link="link1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14159265" upper="3.14159265" velocity="2.0" effort="20.0"/>
+    <dynamics damping="0.1" friction="0.0"/>
+  </joint>
+
+  <joint name="j2" type="revolute">
+    <origin xyz="1 0 0"/>
+    <parent link="link1"/>
+    <child link="link2"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-3.14159265" upper="3.14159265" velocity="2.0" effort="15.0"/>
+    <dynamics damping="0.1" friction="0.0"/>
+  </joint>
+
+  <joint name="j3" type="prismatic">
+    <origin xyz="1 0 0"/>
+    <parent link="link2"/>
+    <child link="link3"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="0.0" upper="1.0" velocity="0.5" effort="10.0"/>
+  </joint>
+</robot>

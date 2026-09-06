@@ -1,0 +1,38 @@
+[package]
+name = "ros2-native-listener"
+description = "AstRS example: an AstRS node using astrs-ros2's Ros2Node directly, no ros2: bridge sugar (blueprint §10.4)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "ros2_native_listener"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "native-talker"
+path = "src/bin/native_talker.rs"
+
+[[bin]]
+name = "native-listener"
+path = "src/bin/native_listener.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+astrs-ros2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+astrs-manifest = { workspace = true }
+
+[lints]
+workspace = true

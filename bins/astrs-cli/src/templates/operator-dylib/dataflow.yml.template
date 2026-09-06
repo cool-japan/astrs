@@ -1,0 +1,24 @@
+# Starter manifest wiring __ASTRS_PROJECT_NAME__ into a runtime host node
+# via its built shared library (blueprint §9.3, §22), scaffolded by
+# `astrs new operator-dylib`.
+#
+# A node whose source is `operators:` has no `path:`/`build:` of its own
+# -- the daemon spawns the generic `astrs-runtime` host process for it.
+# Unlike a compiled-in operator (`astrs new operator`), this one is never
+# linked into that host binary: the `dylib:` field below names the shared
+# library `astrs-runtime`'s `dylib-operators` feature opens with
+# `dlopen`/`LoadLibrary` at spawn time, resolved relative to this manifest
+# file. Build __ASTRS_PROJECT_NAME__ first (`cargo build --release`) and
+# make sure the path below matches the artifact it produces on your
+# platform before `astrs run` -- see this crate's `src/lib.rs` for the
+# exact per-platform file name.
+nodes:
+  - id: runtime-host
+    operators:
+      - id: __ASTRS_PROJECT_NAME__
+        operator: __ASTRS_PROJECT_TYPE__
+        dylib: ./target/release/lib__ASTRS_PROJECT_LIB_FILE_STEM__.so
+        inputs:
+          tick: astrs/timer/secs/1
+        outputs:
+          - status

@@ -1,0 +1,38 @@
+[package]
+name = "dynamic-add-remove"
+description = "AstRS example: astrs node add/remove against a running dataflow (blueprint §8.3, §17)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "dynamic_add_remove"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose — see
+# `tests/conformance`'s estate guard.
+[[bin]]
+name = "dynamic-anchor"
+path = "src/bin/dynamic_anchor.rs"
+
+[[bin]]
+name = "dynamic-worker"
+path = "src/bin/dynamic_worker.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+astrs-graph = { workspace = true }
+astrs-manifest = { workspace = true }
+astrs-yaml = { workspace = true }
+
+[lints]
+workspace = true

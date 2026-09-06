@@ -1,0 +1,16 @@
+# The three operator locators (§9.3), one per entry, each still naming the
+# operator *type* it loads — plus the default compiled-in registry entry.
+nodes:
+  - id: perception
+    operators:
+      - id: crop
+        operator: CropOperator
+      - id: detect
+        operator: YoloDetector
+        dylib: ./libyolo.so
+      - id: filter
+        operator: BandPass
+        wasm: ./filter.wasm
+      - id: track
+        operator: ByteTracker
+        hub: byte-tracker@v0.2.0

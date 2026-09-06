@@ -1,0 +1,12 @@
+module:
+  name: detector
+  inputs: [frames]
+  outputs: [detections]
+
+nodes:
+  - id: yolo
+    path: ./yolo
+    inputs:
+      frames: _mod/frames
+    outputs: [detections]
+    output_types: { detections: "std/vision/v1/Detections" }

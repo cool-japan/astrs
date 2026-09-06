@@ -1,0 +1,16 @@
+# §11.3 real-time scheduling: a control loop on SCHED_FIFO at priority 80,
+# beside an ordinary node that names `normal` explicitly (and so carries no
+# priority at all).
+nodes:
+  - id: control-loop
+    path: ./control-loop
+    rt:
+      policy: fifo
+      priority: 80
+    outputs: [commands]
+  - id: logger
+    path: ./logger
+    rt:
+      policy: normal
+    inputs:
+      commands: control-loop/commands

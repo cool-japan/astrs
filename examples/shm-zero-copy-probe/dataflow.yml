@@ -1,0 +1,45 @@
+# shm-zero-copy-probe — the blueprint §21 M1 zero-copy verification.
+#
+# Run it with:
+#   cargo build -p shm-zero-copy-probe
+#   astrs run examples/shm-zero-copy-probe/dataflow.yml
+#
+# `path:` is relative to this file's directory (that is what `astrs run`
+# resolves node paths against), so the manifest works from any checkout
+# without an absolute path in it.
+astrs: "1"
+name: shm-zero-copy-probe
+exit_when_nodes_finish: true
+
+nodes:
+  - id: producer
+    description: Allocates 4 MiB frames in the ring and publishes them uncopied.
+    path: ../../target/debug/shm-probe-producer
+    build: cargo build -p shm-zero-copy-probe
+    inputs:
+      # The producer waits for the §6.3 upgrade on an ordinary input rather
+      # than in a sleep loop: 20 ms is one frame's cadence, not a poll.
+      tick: astrs/timer/millis/20
+    outputs: [frames, ready]
+    # 40 MiB across the default 8 slots leaves ~5 MiB per slot, so a 4 MiB
+    # frame plus its header fits with room to spare. Without this the default
+    # 8 MiB pool gives 1 MiB slots and every frame falls back to the heap.
+    shm_pool_size: 41943040
+
+  - id: consumer
+    description: Attaches to the ring and proves the bytes were never copied.
+    path: ../../target/debug/shm-probe-consumer
+    build: cargo build -p shm-zero-copy-probe
+    inputs:
+      ready: producer/ready
+      frames:
+        source: producer/frames
+        # Deep enough that no frame is ever evicted, and `backpressure` so a
+        # frame that could not be queued would be *visible* rather than
+        # silently dropped — a probe that quietly lost one would report a
+        # smaller run rather than a failure. The ring is 8 slots, so at most 8
+        # of these are ever outstanding: a queued zero-copy payload pins its
+        # slot, and the producer skips a tick (counted) rather than blocking
+        # when the ring is full (§6.2).
+        queue_size: 32
+        queue_policy: backpressure

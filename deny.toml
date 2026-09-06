@@ -1,0 +1,207 @@
+# cargo-deny configuration for the AstRS workspace (blueprint §18.2).
+#
+# Baseline shape copied from the oxiarc workspace, extended with the AstRS
+# ban table. `cargo deny check bans` runs in CI and in the release preflight.
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    # Not "encountered" under default features -- plain `cargo deny check
+    # licenses` reports this allowance as unmatched there. It is genuinely
+    # used, not dead: astrs-transport's `quic` feature (off by default)
+    # pulls in oxiquic -> oxitls -> rustls/rustls-webpki/rustls-pemfile/
+    # untrusted, all five ISC-licensed. Verified with `cargo deny
+    # --all-features list --layout license`: `ISC (5): rustls@0.23.43,
+    # rustls-pemfile@2.2.0, rustls-webpki@0.102.8, rustls-webpki@0.103.15,
+    # untrusted@0.9.0`. Keep.
+    "ISC",
+    "Zlib",
+    "CC0-1.0",
+    "Unicode-3.0",
+    # `--all-features` only: webpki-roots@1.0.9's bundled Mozilla root-certificate
+    # data, via oxitls-webpki-roots <- oxitls <- oxiquic <- astrs-transport's
+    # `quic` feature. Permissive data license for certificate data, not code.
+    "CDLA-Permissive-2.0",
+]
+
+[bans]
+# Duplicate versions are a warning, not an error: the retained external list
+# still drags in a few crates that pin older `syn`/`windows-sys` majors
+# transitively, and we cannot fix those from here. Revisit at the 0.1.0
+# release preflight.
+multiple-versions = "warn"
+wildcards = "deny"
+# ...except between the workspace's own `publish = false` members. The
+# examples (§5.4) and the conformance suite (§20.3) are path-only by design —
+# the root manifest says so in as many words — because nothing on crates.io
+# may ever refer to them, and a `version =` on such a dependency would claim
+# the opposite. `allow-wildcard-paths` relaxes the rule for private crates
+# only: a wildcard on a *published* crate is still an error, which is the case
+# the rule exists for.
+allow-wildcard-paths = true
+
+# COOLJAPAN policy plus AstRS project-specific bans. Every entry here exists
+# because a pure-Rust, first-party replacement exists — depending on the banned
+# crate would defeat the point of the workspace. See ~/.claude/CLAUDE.md
+# "Dependency Replacements" and blueprint §18.1.
+#
+# NOTE: cargo-deny matches crate names exactly (no globbing), so crate families
+# are enumerated member by member.
+deny = [
+    # -- Serialization ------------------------------------------------------
+    { name = "bincode", use-instead = "oxicode" },
+    { name = "prost", use-instead = "oxiproto" },
+    { name = "prost-types", use-instead = "oxiproto" },
+    { name = "flatbuffers", use-instead = "astrs-data (hand-encoded Arrow IPC headers)" },
+
+    # -- Compression / archive ---------------------------------------------
+    { name = "flate2", use-instead = "oxiarc-deflate" },
+    { name = "miniz_oxide", use-instead = "oxiarc-deflate" },
+    { name = "zstd", use-instead = "oxiarc-zstd" },
+    { name = "zstd-safe", use-instead = "oxiarc-zstd" },
+    { name = "zstd-sys", use-instead = "oxiarc-zstd" },
+    { name = "lz4", use-instead = "oxiarc-lz4" },
+    { name = "lz4-sys", use-instead = "oxiarc-lz4" },
+    { name = "lz4_flex", use-instead = "oxiarc-lz4" },
+    { name = "bzip2", use-instead = "oxiarc-bzip2" },
+    { name = "bzip2-sys", use-instead = "oxiarc-bzip2" },
+    { name = "zip", use-instead = "oxiarc-archive" },
+    { name = "tar", use-instead = "oxiarc-archive" },
+    { name = "snap", use-instead = "oxiarc-snappy" },
+    { name = "brotli", use-instead = "oxiarc-brotli" },
+    { name = "brotli-decompressor", use-instead = "oxiarc-brotli" },
+
+    # -- Numerics -----------------------------------------------------------
+    { name = "rustfft", use-instead = "oxifft" },
+    { name = "openblas-src", use-instead = "oxiblas" },
+
+    # -- Parsing / storage --------------------------------------------------
+    # The `quick-xml` name is remapped in [workspace.dependencies] to
+    # `oxixml-quickxml-compat`; cargo-deny sees the real package name, so this
+    # entry still bans the genuine C-free-but-not-COOLJAPAN crate.
+    { name = "quick-xml", use-instead = "oxixml-quickxml-compat" },
+    { name = "rusqlite", use-instead = "oxisql-sqlite-compat" },
+    { name = "libsqlite3-sys", use-instead = "oxisql-sqlite-compat" },
+
+    # -- Middleware AstRS replaces (blueprint §2.2) -------------------------
+    { name = "zenoh", use-instead = "astrs-transport + astrs-shm + astrs-discovery" },
+    { name = "zenoh-ext", use-instead = "astrs-transport + astrs-shm + astrs-discovery" },
+    { name = "rustdds", use-instead = "astrs-rtps" },
+    { name = "ros2-client", use-instead = "astrs-ros2" },
+    { name = "uhlc", use-instead = "astrs-time" },
+    # dora's `rustdds` chain drags in an abandoned mio 0.6 with known UB. The
+    # modern mio (1.x, via tokio) is fine and must stay allowed.
+    { name = "mio", version = "<0.7", use-instead = "mio 1.x (via tokio)" },
+
+    # -- Git / TLS / crypto C stacks ----------------------------------------
+    # `cc` is a C-compiler driver: any crate invoking it is compiling C into
+    # the tree. blake3 (via oxicrypto-hash/-mac) is the first tolerated
+    # wrapper — and even there nothing is ever compiled, because the
+    # workspace forces blake3's `pure` feature (see the root manifest).
+    #
+    # `iana-time-zone-haiku` is the second, added with `astrs-rosbag`
+    # (blueprint §10.6): `oxisql-sqlite-compat` -> `chrono` (`std` only, no
+    # `clock`, per its own Cargo.toml) -> `iana-time-zone` unifies to the one
+    # `chrono` the whole workspace shares, and `oxisqlite-time` (inside the
+    # pinned `oxisql-sqlite-compat` tree, §19.1) depends on `chrono` at its
+    # crate-level defaults, which is what pulls `clock` — and therefore
+    # `iana-time-zone` — back on through Cargo's feature unification.
+    # `iana-time-zone-haiku` is itself only a
+    # `[target.'cfg(target_os = "haiku")'.dependencies]` entry of
+    # `iana-time-zone`: Cargo.lock is target-agnostic, so it is resolved into
+    # every graph, but its `cc` build-dependency is compiled on Haiku only —
+    # a target AstRS never builds for (`cargo tree -p astrs-rosbag -i cc`
+    # shows it solely under `--target all`, never under the host target).
+    # Any new `cc` parent beyond these two is still a pure-Rust policy
+    # violation and must fail this check.
+    { name = "cc", wrappers = [
+        "blake3",
+        "iana-time-zone-haiku",
+    ], use-instead = "a pure-Rust implementation" },
+    { name = "git2", use-instead = "the system git binary (astrs-cli build driver)" },
+    { name = "libgit2-sys", use-instead = "the system git binary (astrs-cli build driver)" },
+    { name = "openssl", use-instead = "oxicrypto" },
+    { name = "openssl-sys", use-instead = "oxicrypto" },
+    { name = "ring", use-instead = "oxicrypto" },
+    { name = "aws-lc-rs", use-instead = "oxicrypto" },
+    { name = "aws-lc-sys", use-instead = "oxicrypto" },
+
+    # -- Telemetry ----------------------------------------------------------
+    { name = "opentelemetry", use-instead = "astrs-telemetry (own OTLP/HTTP+JSON exporter)" },
+    { name = "opentelemetry-otlp", use-instead = "astrs-telemetry (own OTLP/HTTP+JSON exporter)" },
+    { name = "opentelemetry_sdk", use-instead = "astrs-telemetry (own OTLP/HTTP+JSON exporter)" },
+    { name = "tonic", use-instead = "oxihttp" },
+
+    # -- Python bindings (blueprint §5.3, future `astrs-python`) ------------
+    # Defensive: nothing in the workspace depends on `pyo3` today (`cargo
+    # tree -e normal --all-features --workspace --target all -i pyo3`
+    # matches nothing), so this is a plain `deny` rather than the
+    # `wrappers`-exception shape the Arrow entries below use. When
+    # `astrs-python` (§5.3, P1) lands as a real, feature-gated workspace
+    # member and becomes pyo3's first real dependent, convert this entry to
+    # `wrappers = ["astrs-python"]` the same way the Arrow section below
+    # does for `astrs-data`, rather than deleting it outright.
+    { name = "pyo3", use-instead = "feature-gated astrs-python (P1)" },
+
+    # -- Arrow --------------------------------------------------------------
+    # `astrs-data` implements the Arrow IPC wire format natively and now
+    # carries the `arrow-interop` feature (blueprint §6.1, default OFF):
+    # zero-copy From/TryFrom between its own arrays and arrow-rs 59 arrays.
+    # cargo-deny cannot express a per-feature ban — a `deny` entry is
+    # evaluated against the resolved graph regardless of which features
+    # activated a crate — so the four arrow-rs crates `astrs-data` now
+    # depends on (`arrow-array`, `arrow-buffer`, `arrow-data`,
+    # `arrow-schema`; see its `Cargo.toml`) stay in `deny` but each gained a
+    # `wrappers` list — the same containment shape already used for the `cc`
+    # ban above (`wrappers = ["blake3", "iana-time-zone-haiku"]`). Each
+    # entry's `wrappers` names every crate that is an actual *direct* parent
+    # of it in the resolved graph, not just `astrs-data`: `cargo deny`
+    # requires every incoming edge to a banned crate to originate from a
+    # listed wrapper, and arrow-rs's own crates depend on each other
+    # (`arrow-array` -> `arrow-buffer`/`arrow-data`/`arrow-schema`,
+    # `arrow-data` -> `arrow-buffer`/`arrow-schema`), so `arrow-buffer` and
+    # `arrow-schema` each need three wrappers and `arrow-data` needs two —
+    # verified against `cargo tree -p astrs-data --features arrow-interop -e
+    # normal`, which is the exact edge set below. A `cargo deny check bans`
+    # run without the feature never resolves these four at all (they are
+    # `optional = true` and nothing activates them), so the `wrappers` lists
+    # are exercised only by a run that activates the feature (`cargo deny
+    # --features astrs-data/arrow-interop check bans`, or `--all-features`),
+    # where they are what keeps `cargo deny check bans` green. `arrow` (the
+    # umbrella crate) and `arrow-ipc` are not depended on anywhere —
+    # `astrs-data` hand-decodes Arrow IPC natively (blueprint §6.1) — so both
+    # stay banned outright with no `wrappers` exception; if a future wave
+    # adds either as a real dependency, give it the same treatment (every
+    # actual direct parent, not just `astrs-data`) rather than deleting the
+    # entry.
+    { name = "arrow", use-instead = "astrs-data (hand-decoded Arrow IPC; arrow-ipc is not a dependency)" },
+    { name = "arrow-array", wrappers = [
+        "astrs-data",
+    ], use-instead = "astrs-data (arrow-interop feature only)" },
+    { name = "arrow-buffer", wrappers = [
+        "astrs-data",
+        "arrow-array",
+        "arrow-data",
+    ], use-instead = "astrs-data (arrow-interop feature only)" },
+    { name = "arrow-data", wrappers = [
+        "astrs-data",
+        "arrow-array",
+    ], use-instead = "astrs-data (arrow-interop feature only)" },
+    { name = "arrow-ipc", use-instead = "astrs-data (hand-encoded Arrow IPC headers; blueprint §6.1)" },
+    { name = "arrow-schema", wrappers = [
+        "astrs-data",
+        "arrow-array",
+        "arrow-data",
+    ], use-instead = "astrs-data (arrow-interop feature only)" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

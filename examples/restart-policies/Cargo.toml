@@ -1,0 +1,31 @@
+[package]
+name = "restart-policies"
+description = "AstRS example: supervised restart with exponential backoff and a budget (blueprint §12)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "restart_policies"
+path = "src/lib.rs"
+
+# One binary, two manifests: the difference between recovering inside the
+# budget and exhausting it is a `max_restarts:` line and an environment
+# variable, not different code. Binary names are unique across the whole
+# workspace on purpose — see `tests/conformance`'s estate guard.
+[[bin]]
+name = "restart-worker"
+path = "src/bin/restart_worker.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

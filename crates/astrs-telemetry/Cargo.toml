@@ -1,0 +1,77 @@
+[package]
+name = "astrs-telemetry"
+description = "Tracing setup, an allocation-free metrics registry and a pure-Rust OTLP/HTTP exporter for AstRS."
+documentation = "https://docs.rs/astrs-telemetry"
+readme = "README.md"
+keywords = ["astrs", "telemetry", "metrics", "otlp", "robotics"]
+categories = ["science::robotics", "development-tools::debugging"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+# Blueprint §13: "Export: OTLP/HTTP+JSON exporter ... Feature
+# `telemetry-export`, default on (pure Rust, small)." Disabling it drops
+# the `export` module and its `oxihttp` dependency entirely (registry,
+# sampler and subscriber setup are unaffected) for a build that wants
+# metrics/logging/tracing without an HTTP client compiled in at all.
+default = ["telemetry-export"]
+telemetry-export = ["dep:oxihttp"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+# Wire-level shapes for metrics and traces (MetricBatch/MetricPoint/
+# MetricValue/HistogramBucket, TraceSpan/SpanStatus/TraceData) plus
+# Metadata/ParamKey for span-context propagation. astrs-wire's own docs
+# ("common/metrics.rs") say it owns these shapes precisely so this crate's
+# registry and exporter do not have to invent a second, incompatible set.
+astrs-wire = { workspace = true }
+# HlcClock/Clock/HlcTimestamp/SystemClock: every span and metric batch this
+# crate produces is HLC-stamped (blueprint §4.3), matching the one clock
+# type used across the whole tree.
+astrs-time = { workspace = true }
+# LogRecord/LogLevel/format::{human,json}: the tracing-subscriber Layer in
+# `subscriber::fmt_layer` renders through these formatters instead of
+# inventing a second log rendering, per astrs-log's own docs ("the `tracing`
+# bridge that `astrs-telemetry` (W2) builds on top of this crate").
+astrs-log = { workspace = true }
+# OS syscalls for the sampler: pid retrieval and a portable `kill(pid, 0)`
+# liveness probe (feature "process", already enabled at the workspace
+# level) before attempting the OS-specific CPU/RSS read.
+rustix = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# The background export loop (batching interval, retry backoff sleeps) and
+# the OTLP HTTP client both need an async runtime. Needed regardless of
+# the `telemetry-export` feature: `sampler::spawn_periodic_sampling` also
+# spawns a background task.
+tokio = { workspace = true }
+# OTLP/HTTP+JSON client transport (blueprint §13: "own ~1.5k-line
+# implementation over oxihttp" -- no opentelemetry-*/tonic). Optional:
+# gated behind the `telemetry-export` feature (default on).
+oxihttp = { workspace = true, optional = true }
+
+[[test]]
+name = "exporter_retry_backoff"
+path = "tests/exporter_retry_backoff.rs"
+required-features = ["telemetry-export"]
+
+[[test]]
+name = "proptest_invariants"
+path = "tests/proptest_invariants.rs"
+required-features = ["telemetry-export"]
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,46 @@
+[package]
+name = "record-replay"
+description = "AstRS example: record a live graph to .arec and replay it into a modified graph (blueprint §14)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "record_replay"
+path = "src/lib.rs"
+
+# Binary names are unique across the whole workspace on purpose: cargo puts
+# every member's binaries in one `target/<profile>/` directory, so two
+# packages declaring the same `[[bin]] name` silently overwrite each other and
+# a manifest then spawns whichever was built last. `tests/conformance`'s
+# estate guard asserts this uniqueness.
+[[bin]]
+name = "arec-sensor"
+path = "src/bin/arec_sensor.rs"
+
+[[bin]]
+name = "arec-detector"
+path = "src/bin/arec_detector.rs"
+
+[[bin]]
+name = "arec-writer"
+path = "src/bin/arec_writer.rs"
+
+[[bin]]
+name = "arec-probe"
+path = "src/bin/arec_probe.rs"
+
+[dependencies]
+astrs-node-api = { workspace = true }
+astrs-recording = { workspace = true }
+astrs-wire = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

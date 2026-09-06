@@ -1,0 +1,45 @@
+# streaming-segments — chunked streaming of large payloads over the
+# session_id/segment_id/seq/fin pattern (blueprint §9.4).
+#
+#   cargo build -p streaming-segments
+#   astrs run examples/streaming-segments/dataflow.yml
+#
+# `path:` is relative to this file's directory (that is what `astrs run`
+# resolves node paths against), so the manifest works from any checkout
+# without an absolute path in it.
+#
+#   [streamer] ──chunks──► [collector]
+#
+# Each "segment" streamer publishes is a 256 KiB synthetic payload — larger
+# than any single message this estate's other examples send — split into 16
+# KiB chunks via `Node::stream_segment` (`session_id`/`segment_id`/`seq`/
+# `fin`, §9.4). `collector` reassembles every segment with a
+# `StreamAssembler` and verifies the reassembled bytes byte-for-byte. Deep
+# queues and `queue_policy: backpressure`, as `record-replay` uses for the
+# same reason: a stream chunk carries none of §11.2's correlation keys (no
+# `request_id`/`goal_id`), so it is *not* eviction-immune, and a dropped
+# chunk would surface as a reassembly gap rather than a slow producer.
+astrs: "1"
+name: streaming-segments
+exit_when_nodes_finish: true
+
+nodes:
+  - id: streamer
+    description: Publishes deterministic 256 KiB segments in 16 KiB chunks.
+    path: ../../target/debug/segment-streamer
+    build: cargo build -p streaming-segments
+    inputs:
+      tick: astrs/timer/millis/50
+    outputs: [chunks]
+    env:
+      STREAMING_SEGMENTS_COUNT: 6
+
+  - id: collector
+    description: Reassembles every segment and verifies its bytes.
+    path: ../../target/debug/segment-collector
+    build: cargo build -p streaming-segments
+    inputs:
+      chunks:
+        source: streamer/chunks
+        queue_size: 64
+        queue_policy: backpressure
