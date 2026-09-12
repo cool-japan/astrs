@@ -163,9 +163,9 @@ typed-vs-any = { path = "examples/typed-vs-any" }
 # COOLJAPAN ecosystem — released crates.io versions only, never path deps
 # (blueprint §19.1). Bumping any of these is a deliberate, recorded change.
 # ---------------------------------------------------------------------------
-oxiarc-deflate = { version = "0.4.1" }
-oxiarc-lz4 = { version = "0.4.1" }
-oxiarc-zstd = { version = "0.4.1" }
+oxiarc-deflate = { version = "0.4.2" }
+oxiarc-lz4 = { version = "0.4.2" }
+oxiarc-zstd = { version = "0.4.2" }
 oxicode = { version = "0.2.6" }
 oxicode_derive = { version = "0.2.6" }
 oxicrypto = { version = "0.3.0" }
