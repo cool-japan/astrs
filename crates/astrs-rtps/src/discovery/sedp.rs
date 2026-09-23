@@ -29,7 +29,25 @@
 //! [`builtin_pairs`](crate::discovery::builtin::builtin_pairs), and
 //! [`builtin_reader_proxy`] and [`builtin_writer_proxy`] turn a pair into the
 //! two proxies.
+//!
+//! # Every endpoint is an instance of its own
+//!
+//! Both SEDP topics are keyed: the key of a sample is the endpoint's GUID
+//! (§8.5.4.2), and a key of sixteen octets is its own key hash (§9.6.3.8).
+//! The builtin writers keep `KEEP_LAST 1` under `TRANSIENT_LOCAL`, and
+//! `KEEP_LAST` counts *per instance* — so an announcement, and the disposal
+//! that later retires it, are filed under the endpoint's GUID and never under
+//! the keyless `InstanceHandle::NIL`. Shared by every endpoint, that one
+//! instance would hold only the newest announcement, and a peer that
+//! discovers this participant late would be replayed a single endpoint per
+//! topic. The receiving side files what arrives under the same GUID, read
+//! from `PID_KEY_HASH` or from the sample itself, so a reader's `KEEP_LAST 1`
+//! is one announcement per endpoint as well. SPDP is keyed the same way, by
+//! the participant's GUID.
 
+use astrs_cdr::{ParameterList, pid};
+
+use crate::behavior::cache::{ChangeKind, INSTANCE_HANDLE_LEN, InstanceHandle};
 use crate::behavior::endpoint::TopicKey;
 use crate::behavior::error::BehaviorResult;
 use crate::behavior::proxy::{ReaderProxy, WriterProxy};
@@ -42,7 +60,12 @@ use crate::discovery::endpoint_data::{
     XCDR2_REPRESENTATION,
 };
 use crate::discovery::matching::{ReaderQos, WriterQos};
-use crate::structure::{Guid, Locator};
+use crate::discovery::plist::decode_one;
+use crate::messages::SerializedPayload;
+use crate::structure::{
+    ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER, ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_READER,
+    ENTITYID_SPDP_BUILTIN_PARTICIPANT_READER, EntityId, GUID_LEN, Guid, Locator,
+};
 
 /// Build the SEDP publication sample for a local writer.
 ///
@@ -161,6 +184,118 @@ pub fn builtin_writer_proxy(pair: BuiltinPair, locators: Vec<Locator>) -> Writer
     WriterProxy::new(pair.writer, locators, pair.reliable)
 }
 
+/// The instance a sample on a GUID-keyed discovery topic is filed under.
+///
+/// The key of `DCPSPublication` and `DCPSSubscription` is the endpoint's
+/// GUID, and that of `DCPSParticipant` the participant's. A key of at most
+/// sixteen octets is its own key hash (§9.6.3.8), so the GUID's octets *are*
+/// the instance handle.
+#[must_use]
+pub(crate) const fn guid_instance(guid: Guid) -> InstanceHandle {
+    InstanceHandle::new(guid.to_bytes())
+}
+
+/// The instance a sample arriving at the local reader `reader` belongs to.
+///
+/// [`InstanceHandle::NIL`] unless `reader` is one of the three discovery
+/// readers whose topic is keyed by a GUID. For those, in §9.6.3.8's order —
+/// a key hash the writer sent is authoritative, and one it did not send is
+/// computed from the sample:
+///
+/// 1. `PID_KEY_HASH` in the inline QoS, when it is there and sixteen octets.
+/// 2. The GUID parameter of a `PL_CDR` payload: every announcement, and a
+///    disposal whose key is sent as a parameter list.
+/// 3. For a disposal, the GUID a plain-CDR key carries — the shape
+///    [`RtpsWriter::dispose`] sends, read by [`guid_from_key`].
+///
+/// So an announcement and the disposal that retires it land on the same
+/// instance whichever form a peer used. A sample none of the three can
+/// attribute stays on NIL: it is still delivered, merely not told apart.
+#[must_use]
+pub(crate) fn builtin_instance(
+    reader: EntityId,
+    kind: ChangeKind,
+    inline_qos: Option<&ParameterList<'_>>,
+    payload: &[u8],
+) -> InstanceHandle {
+    let Some(parameter) = key_parameter(reader) else {
+        return InstanceHandle::NIL;
+    };
+    if let Some(instance) = inline_qos.and_then(key_hash) {
+        return instance;
+    }
+    let payload = SerializedPayload::new(payload);
+    let guid = if payload.is_parameter_list() {
+        payload.parameter_list().ok().and_then(|(list, encoding)| {
+            decode_one::<Guid>(&list, parameter, encoding, "discovery sample key")
+                .ok()
+                .flatten()
+        })
+    } else if kind.carries_data() {
+        // A live discovery sample is always a parameter list. Anything else
+        // is refused when it is absorbed, and names no key to file it under.
+        None
+    } else {
+        guid_from_key(payload.as_slice())
+    };
+    guid.map_or(InstanceHandle::NIL, guid_instance)
+}
+
+/// The GUID a discovery sample's instance names, or `None` for
+/// [`InstanceHandle::NIL`].
+///
+/// The inverse of [`guid_instance`]: on the GUID-keyed discovery topics the
+/// instance handle is the key hash, and the key hash is the GUID. So a
+/// sample [`builtin_instance`] attributed — by `PID_KEY_HASH`, by a `PL_CDR`
+/// key or by a plain-CDR one — names its entity here, whichever form the
+/// peer sent. A disposal that carries only a key hash, which DDSI-RTPS
+/// §9.6.3.8 allows, has no payload to read a GUID from at all.
+#[must_use]
+pub(crate) const fn guid_of_instance(instance: InstanceHandle) -> Option<Guid> {
+    if instance.is_nil() {
+        None
+    } else {
+        Some(Guid::from_bytes(*instance.as_bytes()))
+    }
+}
+
+/// Read a GUID out of a disposal sample's key payload.
+///
+/// A `DATA` that disposes of a builtin instance carries the key rather than
+/// the sample, and for the discovery topics the key *is* the entity's GUID:
+/// sixteen octets after the four-octet encapsulation header, which is what
+/// [`RtpsWriter::dispose`] sends. Anything else is a disposal this reading
+/// cannot attribute, and is ignored rather than guessed at.
+pub(crate) fn guid_from_key(payload: &[u8]) -> Option<Guid> {
+    let body = payload.get(astrs_cdr::ENCAPSULATION_HEADER_LEN..)?;
+    Guid::from_slice(body.get(..GUID_LEN)?)
+}
+
+/// The parameter that carries the key of the topic `reader` subscribes to,
+/// or `None` when that topic is not keyed by a GUID.
+///
+/// Three builtin readers qualify. The WLP reader's key is a prefix and a
+/// kind rather than a GUID, and a user topic's key belongs to its type —
+/// every ROS 2 topic is keyless — so both stay on [`InstanceHandle::NIL`].
+fn key_parameter(reader: EntityId) -> Option<u16> {
+    if reader == ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER
+        || reader == ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_READER
+    {
+        Some(pid::ENDPOINT_GUID)
+    } else if reader == ENTITYID_SPDP_BUILTIN_PARTICIPANT_READER {
+        Some(pid::PARTICIPANT_GUID)
+    } else {
+        None
+    }
+}
+
+/// A sixteen-octet `PID_KEY_HASH` out of an inline QoS list.
+fn key_hash(inline_qos: &ParameterList<'_>) -> Option<InstanceHandle> {
+    let parameter = inline_qos.get_by_base(pid::KEY_HASH)?;
+    let octets = <[u8; INSTANCE_HANDLE_LEN]>::try_from(parameter.value.as_ref()).ok()?;
+    Some(InstanceHandle::new(octets))
+}
+
 /// The QoS every SEDP builtin writer offers.
 #[must_use]
 pub fn sedp_writer_qos() -> WriterQos {
@@ -238,8 +373,15 @@ mod tests {
     use crate::behavior::reader::ReaderConfig;
     use crate::behavior::writer::WriterConfig;
     use crate::discovery::builtin::{BuiltinEndpointSet, builtin_pairs};
-    use crate::structure::{EntityId, EntityKind, GuidPrefix, VendorId};
+    use crate::discovery::participant_data::ParticipantData;
+    use crate::messages::inline_qos_encoding;
+    use crate::structure::{
+        ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER, ENTITYID_PARTICIPANT,
+        ENTITYID_SEDP_BUILTIN_PUBLICATIONS_WRITER, EntityId, EntityKind, GuidPrefix, VendorId,
+    };
+    use astrs_cdr::{Encoding, Endianness, ParameterId};
     use std::net::Ipv4Addr;
+    use std::time::Instant;
 
     const TOPIC: &str = "rt/chatter";
     const TYPE: &str = "std_msgs::msg::dds_::String_";
@@ -490,5 +632,191 @@ mod tests {
             &publication.qos,
         );
         assert!(outcome.is_matched());
+    }
+
+    // -----------------------------------------------------------------------
+    // Instances: every discovery sample is filed under the GUID it names
+    // -----------------------------------------------------------------------
+
+    /// Where a live sample with no inline QoS is filed.
+    fn filed(reader: EntityId, payload: &[u8]) -> InstanceHandle {
+        builtin_instance(reader, ChangeKind::Alive, None, payload)
+    }
+
+    /// An inline QoS list carrying one `PID_KEY_HASH` of `octets`.
+    fn key_hash_qos(octets: &[u8]) -> ParameterList<'static> {
+        let mut list = ParameterList::new(inline_qos_encoding(Endianness::Little));
+        list.push_octets(ParameterId::new(pid::KEY_HASH), octets.to_vec())
+            .unwrap();
+        list
+    }
+
+    fn publication_payload(writer: &RtpsWriter) -> Vec<u8> {
+        publication_for(writer, Vec::new(), RosCompat::Jazzy)
+            .unwrap()
+            .to_payload()
+            .unwrap()
+            .into_cow()
+            .into_owned()
+    }
+
+    #[test]
+    fn every_discovery_sample_is_filed_under_the_guid_it_names() {
+        let publisher = writer(WriterQos::default());
+        assert_eq!(
+            filed(
+                ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER,
+                &publication_payload(&publisher)
+            ),
+            guid_instance(publisher.guid())
+        );
+
+        let subscriber = reader(ReaderQos::default());
+        let subscription = subscription_for(&subscriber, Vec::new(), RosCompat::Jazzy)
+            .unwrap()
+            .to_payload()
+            .unwrap();
+        assert_eq!(
+            filed(
+                ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_READER,
+                subscription.as_slice()
+            ),
+            guid_instance(subscriber.guid())
+        );
+
+        let participant = prefix(3).with_entity(ENTITYID_PARTICIPANT);
+        let announcement = ParticipantData::new(participant).to_payload().unwrap();
+        assert_eq!(
+            filed(
+                ENTITYID_SPDP_BUILTIN_PARTICIPANT_READER,
+                announcement.as_slice()
+            ),
+            guid_instance(participant)
+        );
+    }
+
+    #[test]
+    fn an_announcement_and_its_disposal_share_an_instance() {
+        let publisher = writer(WriterQos::default());
+        // The disposal exactly as the SEDP writer writes it.
+        let mut announcer = RtpsWriter::new(
+            WriterConfig::new(
+                Guid::new(prefix(1), ENTITYID_SEDP_BUILTIN_PUBLICATIONS_WRITER),
+                publications_topic().unwrap(),
+            )
+            .with_qos(WriterQos::builtin_sedp()),
+        );
+        let number = announcer.dispose(publisher.guid(), Instant::now()).unwrap();
+        let change = announcer.cache().get(number).unwrap();
+        assert_eq!(
+            change.instance,
+            guid_instance(publisher.guid()),
+            "the writer files the disposal under the endpoint it names"
+        );
+        assert_eq!(
+            builtin_instance(
+                ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER,
+                ChangeKind::NotAliveDisposed,
+                None,
+                &change.payload,
+            ),
+            filed(
+                ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER,
+                &publication_payload(&publisher)
+            ),
+            "and a reader files it where it filed the announcement"
+        );
+    }
+
+    #[test]
+    fn a_disposal_keyed_by_a_parameter_list_is_attributed_too() {
+        // How other stacks send a disposal's key: a `PL_CDR` list holding
+        // `PID_ENDPOINT_GUID` alone.
+        let endpoint = writer(WriterQos::default()).guid();
+        let mut list = ParameterList::new(Encoding::DISCOVERY);
+        list.push_value(ParameterId::new(pid::ENDPOINT_GUID), &endpoint)
+            .unwrap();
+        let key = SerializedPayload::from_parameter_list(&list).unwrap();
+        assert_eq!(
+            builtin_instance(
+                ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER,
+                ChangeKind::NotAliveDisposed,
+                None,
+                key.as_slice(),
+            ),
+            guid_instance(endpoint)
+        );
+    }
+
+    #[test]
+    fn a_key_hash_outranks_the_sample_when_it_is_sixteen_octets() {
+        let publisher = writer(WriterQos::default());
+        let payload = publication_payload(&publisher);
+        let reader = ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER;
+        assert_eq!(
+            builtin_instance(
+                reader,
+                ChangeKind::Alive,
+                Some(&key_hash_qos(&[5; 16])),
+                &payload
+            ),
+            InstanceHandle::new([5; 16]),
+            "a key hash the writer sent is authoritative"
+        );
+        assert_eq!(
+            builtin_instance(
+                reader,
+                ChangeKind::Alive,
+                Some(&key_hash_qos(&[5; 8])),
+                &payload
+            ),
+            guid_instance(publisher.guid()),
+            "a key hash of the wrong length is none, and the sample decides"
+        );
+    }
+
+    #[test]
+    fn only_the_guid_keyed_discovery_readers_file_by_key() {
+        let payload = publication_payload(&writer(WriterQos::default()));
+        let key_hash = key_hash_qos(&[5; 16]);
+        for reader in [
+            ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER,
+            EntityId::user_defined(1, EntityKind::USER_READER_NO_KEY),
+            EntityId::user_defined(1, EntityKind::USER_READER_WITH_KEY),
+        ] {
+            assert_eq!(
+                builtin_instance(reader, ChangeKind::Alive, Some(&key_hash), &payload),
+                InstanceHandle::NIL,
+                "{reader:?} is not keyed by a GUID"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sample_that_names_no_guid_stays_on_nil() {
+        let reader = ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER;
+        assert_eq!(
+            builtin_instance(reader, ChangeKind::NotAliveDisposed, None, &[]),
+            InstanceHandle::NIL,
+            "an empty disposal"
+        );
+
+        // A GUID, but not the parameter that keys this topic.
+        let mut list = ParameterList::new(Encoding::DISCOVERY);
+        list.push_value(
+            ParameterId::new(pid::PARTICIPANT_GUID),
+            &prefix(3).with_entity(ENTITYID_PARTICIPANT),
+        )
+        .unwrap();
+        let wrong = SerializedPayload::from_parameter_list(&list).unwrap();
+        assert_eq!(filed(reader, wrong.as_slice()), InstanceHandle::NIL);
+
+        // A live sample that is not a parameter list is refused when it is
+        // absorbed; it is not read as a key either.
+        let mut raw = vec![0x00, 0x01, 0x00, 0x00];
+        raw.extend_from_slice(&writer(WriterQos::default()).guid().to_bytes());
+        assert_eq!(filed(reader, &raw), InstanceHandle::NIL);
+
+        assert_eq!(guid_from_key(&[0x00, 0x01, 0x00, 0x00, 1, 2, 3]), None);
     }
 }

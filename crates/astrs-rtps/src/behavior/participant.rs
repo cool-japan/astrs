@@ -1191,8 +1191,10 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use crate::behavior::cache::{ChangeKind, InstanceHandle};
     use crate::structure::{
-        ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_READER, ENTITYID_SPDP_BUILTIN_PARTICIPANT_WRITER,
+        ENTITYID_SEDP_BUILTIN_PUBLICATIONS_WRITER, ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_READER,
+        ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_WRITER, ENTITYID_SPDP_BUILTIN_PARTICIPANT_WRITER,
         VendorId,
     };
 
@@ -1300,6 +1302,201 @@ mod tests {
     async fn announcing_to_a_peer_produces_one_datagram() {
         let participant = Participant::new(config(7)).await.expect("bind");
         assert_eq!(participant.announce().await.expect("announce"), 1);
+    }
+
+    /// What one of `participant`'s own writers holds: the kind and instance
+    /// of every change, oldest first.
+    async fn history_of(
+        participant: &Participant,
+        writer: EntityId,
+    ) -> Vec<(ChangeKind, InstanceHandle)> {
+        let state = participant.inner.state.lock().await;
+        state
+            .writers
+            .get(&writer)
+            .map(|writer| {
+                writer
+                    .cache()
+                    .iter()
+                    .map(|change| (change.kind, change.instance))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn a_departed_participant_has_nothing_left_to_announce() {
+        // The SPDP sample and the disposal that announces the departure are
+        // filed under one instance, the participant's GUID, so the disposal
+        // *replaces* the sample. Filed apart, the sample would outlive it, and
+        // a cadence that raced the shutdown would announce the participant
+        // alive again right after its peers had forgotten it.
+        let participant = Participant::new(config(15)).await.expect("bind");
+        assert_eq!(participant.announce().await.expect("announce"), 1);
+        participant.shutdown().await;
+        assert_eq!(
+            participant.announce().await.expect("announce"),
+            0,
+            "a departed participant must not announce itself"
+        );
+        assert_eq!(
+            history_of(&participant, ENTITYID_SPDP_BUILTIN_PARTICIPANT_WRITER).await,
+            vec![(
+                ChangeKind::NotAliveDisposed,
+                InstanceHandle::new(participant.guid().to_bytes())
+            )]
+        );
+
+        // The departure is a retirement, and this participant never met a
+        // peer, so its SPDP writer has no matched reader to owe it to: the
+        // first cadence after it went out drops it, and there is still
+        // nothing to announce.
+        participant.tick().await.expect("tick");
+        assert!(
+            history_of(&participant, ENTITYID_SPDP_BUILTIN_PARTICIPANT_WRITER)
+                .await
+                .is_empty()
+        );
+        assert_eq!(participant.announce().await.expect("announce"), 0);
+    }
+
+    /// The cadence [`brisk`] participants announce, heartbeat and tick at —
+    /// the integration harness's.
+    const BRISK: StdDuration = StdDuration::from_millis(20);
+
+    /// How long a wait below may take before the test fails. It bounds a
+    /// failure, not a success: on loopback the exchange takes milliseconds.
+    const PATIENCE: StdDuration = StdDuration::from_secs(10);
+
+    /// A participant at the [`BRISK`] cadence, with `peer` as its only
+    /// initial peer when there is one.
+    fn brisk(seed: u8, peer: Option<Locator>) -> ParticipantConfig {
+        let mut spdp = SpdpConfig::new(0, 0, prefix(seed))
+            .expect("domain 0")
+            .with_multicast(false)
+            .with_announce_period(BRISK);
+        if let Some(peer) = peer {
+            spdp = spdp.with_initial_peer(peer);
+        }
+        ParticipantConfig::from_spdp(spdp)
+            .with_heartbeat_period(BRISK)
+            .with_tick_period(BRISK)
+    }
+
+    /// The remote writers and readers `participant` has discovered, sorted.
+    async fn known_endpoints(participant: &Participant) -> (Vec<Guid>, Vec<Guid>) {
+        let db = participant.discovery_snapshot().await;
+        let mut writers: Vec<Guid> = db.writers().map(|writer| writer.guid()).collect();
+        let mut readers: Vec<Guid> = db.readers().map(|reader| reader.guid()).collect();
+        writers.sort_unstable();
+        readers.sort_unstable();
+        (writers, readers)
+    }
+
+    #[tokio::test]
+    async fn deleting_endpoints_for_ever_leaves_the_sedp_history_bounded() {
+        // A node that creates and deletes endpoints for its whole life writes
+        // one retirement per deletion to its SEDP writers. Once the peer has
+        // acknowledged them they must be gone, leaving the announcements of
+        // the endpoints that exist and nothing else — and a participant that
+        // arrives afterwards must learn exactly those endpoints.
+        const CYCLES: u32 = 24;
+        const KEEP_EVERY: u32 = 8;
+        let left = Participant::new(brisk(16, None)).await.expect("bind");
+        let left_task = left.spawn(BRISK);
+        let right = Participant::new(brisk(17, Some(left.metatraffic_locator())))
+            .await
+            .expect("bind");
+        let right_task = right.spawn(BRISK);
+        let deadline = Instant::now() + PATIENCE;
+        while !(left.knows(right.guid()).await && right.knows(left.guid()).await) {
+            assert!(Instant::now() < deadline, "the two participants never met");
+            tokio::time::sleep(StdDuration::from_millis(1)).await;
+        }
+
+        let mut writers = Vec::new();
+        let mut readers = Vec::new();
+        for cycle in 0..CYCLES {
+            let topic = TopicKey::new(
+                format!("rt/churn/topic_{cycle}"),
+                "std_msgs::msg::dds_::String_",
+            )
+            .expect("valid names");
+            let writer = left
+                .create_writer(topic.clone(), WriterQos::services_default())
+                .await
+                .expect("writer");
+            let reader = left
+                .create_reader(topic, ReaderQos::reliable(10))
+                .await
+                .expect("reader");
+            if cycle % KEEP_EVERY == 0 {
+                writers.push(writer.guid());
+                readers.push(reader.guid());
+            } else {
+                assert!(left.delete_writer(writer.guid()).await.expect("delete"));
+                assert!(left.delete_reader(reader.guid()).await.expect("delete"));
+            }
+        }
+        writers.sort_unstable();
+        readers.sort_unstable();
+
+        let announced = |guids: &[Guid]| -> Vec<(ChangeKind, InstanceHandle)> {
+            let mut held: Vec<(ChangeKind, InstanceHandle)> = guids
+                .iter()
+                .map(|guid| (ChangeKind::Alive, InstanceHandle::new(guid.to_bytes())))
+                .collect();
+            held.sort_unstable_by_key(|(_, instance)| *instance);
+            held
+        };
+        let sorted = |mut held: Vec<(ChangeKind, InstanceHandle)>| {
+            held.sort_unstable_by_key(|(_, instance)| *instance);
+            held
+        };
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let publications =
+                sorted(history_of(&left, ENTITYID_SEDP_BUILTIN_PUBLICATIONS_WRITER).await);
+            let subscriptions =
+                sorted(history_of(&left, ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_WRITER).await);
+            if publications == announced(&writers)
+                && subscriptions == announced(&readers)
+                && known_endpoints(&right).await == (writers.clone(), readers.clone())
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "after {CYCLES} create/delete cycles the SEDP writers still held \
+                 publications {publications:?} and subscriptions {subscriptions:?}; \
+                 only the survivors' announcements should remain"
+            );
+            tokio::time::sleep(StdDuration::from_millis(1)).await;
+        }
+
+        // A participant that arrives only now is replayed exactly that history.
+        let late = Participant::new(brisk(18, Some(left.metatraffic_locator())))
+            .await
+            .expect("bind");
+        let late_task = late.spawn(BRISK);
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let known = known_endpoints(&late).await;
+            if known == (writers.clone(), readers.clone()) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the late joiner knew {known:?}, not exactly the survivors \
+                 {writers:?} and {readers:?}"
+            );
+            tokio::time::sleep(StdDuration::from_millis(1)).await;
+        }
+
+        for (participant, task) in [(late, late_task), (right, right_task), (left, left_task)] {
+            participant.shutdown().await;
+            let _ = tokio::time::timeout(PATIENCE, task).await;
+        }
     }
 
     #[tokio::test]

@@ -32,21 +32,33 @@
 //! # History
 //!
 //! Accepted samples queue up until the application takes them, bounded by the
-//! reader's own `HISTORY` policy — `KEEP_LAST n` drops the oldest, `KEEP_ALL`
-//! is bounded only by `RESOURCE_LIMITS`. A dropped sample is *still*
-//! acknowledged: it arrived, the protocol delivered it, and the application
-//! chose a depth that could not hold it. Nacking it would ask the writer to
-//! send something that would be dropped again.
+//! reader's own `HISTORY` policy — `KEEP_LAST n` keeps the newest `n` of each
+//! instance and drops the oldest of that instance, `KEEP_ALL` is bounded only
+//! by `RESOURCE_LIMITS`. A dropped sample is *still* acknowledged: it
+//! arrived, the protocol delivered it, and the application chose a depth that
+//! could not hold it. Nacking it would ask the writer to send something that
+//! would be dropped again.
+//!
+//! An instance is what a sample's key names. A user reader files every
+//! sample under [`InstanceHandle::NIL`](crate::behavior::InstanceHandle::NIL)
+//! — every ROS 2 topic is keyless — so there the depth bounds the topic as a
+//! whole. The discovery readers whose topics are keyed by a GUID — SPDP's
+//! participants, SEDP's publications and subscriptions — file each sample
+//! under the GUID it names instead, so their `KEEP_LAST 1` holds one
+//! announcement per participant or endpoint: a replay to a late joiner packs
+//! several into one datagram, and all of them must survive until it is
+//! drained.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration as StdDuration, Instant};
 
-use crate::behavior::cache::{ChangeKind, InstanceHandle};
+use crate::behavior::cache::ChangeKind;
 use crate::behavior::endpoint::{Outbound, Sample, TopicKey};
 use crate::behavior::error::BehaviorResult;
 use crate::behavior::fragment::Reassembler;
 use crate::behavior::proxy::WriterProxy;
 use crate::discovery::matching::ReaderQos;
+use crate::discovery::sedp::builtin_instance;
 use crate::messages::{
     Data, DataFrag, Gap, Header, Heartbeat, InfoDestination, Message, NackFrag, SerializedPayload,
 };
@@ -178,6 +190,10 @@ pub struct RtpsReader {
     last_sample_at: BTreeMap<Guid, Instant>,
     fragment_progress: BTreeMap<(Guid, SequenceNumber), u32>,
     dropped: u64,
+    /// The highest `ACKNACK` count any writer proxy this reader has dropped
+    /// had reached. A proxy matched later counts on from it — see
+    /// [`match_writer`](Self::match_writer).
+    departed_acknack_count: i32,
 }
 
 impl RtpsReader {
@@ -192,6 +208,7 @@ impl RtpsReader {
             last_sample_at: BTreeMap::new(),
             fragment_progress: BTreeMap::new(),
             dropped: 0,
+            departed_acknack_count: 0,
         }
     }
 
@@ -252,11 +269,26 @@ impl RtpsReader {
     ///
     /// Idempotent: re-matching refreshes locators without disturbing
     /// reception state, which is what a repeated SEDP announcement should do.
+    ///
+    /// # A writer matched again
+    ///
+    /// A writer this reader dropped and now matches again — its participant's
+    /// lease ran out here and it was rediscovered — may still hold the
+    /// proxy it kept for this reader, and with it the count of the last
+    /// `ACKNACK` it accepted. A new proxy starting at one would be stale to
+    /// it until it had caught up, one heartbeat period per `ACKNACK`, while
+    /// the reader waited for what it forgot. So a new proxy counts on from
+    /// the highest count any proxy this reader dropped had reached: a count
+    /// only has to grow, never to start at one (§8.3.7.1), and one number for
+    /// the whole reader bounds the memory by one integer however many
+    /// writers come and go.
     pub fn match_writer(&mut self, proxy: WriterProxy) {
         let guid = proxy.guid();
         match self.matched.get_mut(&guid) {
             Some(existing) => existing.set_locators(proxy.locators(), Vec::new()),
             None => {
+                let mut proxy = proxy;
+                proxy.resume_acknack_count(self.departed_acknack_count);
                 self.matched.insert(guid, proxy);
             }
         }
@@ -267,7 +299,12 @@ impl RtpsReader {
         self.reassembler.discard_writer(guid);
         self.last_sample_at.remove(&guid);
         self.fragment_progress.retain(|(held, _), _| *held != guid);
-        self.matched.remove(&guid).is_some()
+        let Some(proxy) = self.matched.remove(&guid) else {
+            return false;
+        };
+        // Remembered for the proxy that may replace it: see `match_writer`.
+        self.departed_acknack_count = self.departed_acknack_count.max(proxy.acknack_count());
+        true
     }
 
     /// Remove every matched writer belonging to one participant.
@@ -348,7 +385,21 @@ impl RtpsReader {
             .map(SerializedPayload::as_slice)
             .unwrap_or_default()
             .to_vec();
-        self.deliver(writer, data.writer_sn, payload, timestamp, kind, now);
+        let instance = builtin_instance(
+            self.config.guid.entity_id,
+            kind,
+            data.inline_qos.as_ref(),
+            &payload,
+        );
+        self.deliver(Sample {
+            writer,
+            sequence_number: data.writer_sn,
+            payload,
+            source_timestamp: timestamp,
+            received_at: now,
+            kind,
+            instance,
+        });
         Ok(true)
     }
 
@@ -390,14 +441,21 @@ impl RtpsReader {
         if !proxy.accept_data(fragment.writer_sn) {
             return Ok(false);
         }
-        self.deliver(
-            writer,
-            fragment.writer_sn,
-            payload,
-            timestamp,
+        let instance = builtin_instance(
+            self.config.guid.entity_id,
             ChangeKind::Alive,
-            now,
+            fragment.inline_qos.as_ref(),
+            &payload,
         );
+        self.deliver(Sample {
+            writer,
+            sequence_number: fragment.writer_sn,
+            payload,
+            source_timestamp: timestamp,
+            received_at: now,
+            kind: ChangeKind::Alive,
+            instance,
+        });
         Ok(true)
     }
 
@@ -437,7 +495,18 @@ impl RtpsReader {
             return 0;
         };
         let added = proxy.accept_gap(gap);
-        for number in gap.irrelevant() {
+        // A part-assembled sample the GAP names is never coming. Ask the
+        // assemblies in flight — a bounded handful — whether the GAP covers
+        // them, never the GAP for every number it covers: its run has no
+        // length limit, and `gapStart = 1, bitmapBase = 2^62` is a valid GAP
+        // that would hold the participant's lock for as long as it took to
+        // count that high.
+        let abandoned: Vec<SequenceNumber> = self
+            .reassembler
+            .in_flight(writer)
+            .filter(|number| gap.covers(*number))
+            .collect();
+        for number in abandoned {
             self.reassembler.discard(writer, number);
         }
         added
@@ -612,33 +681,44 @@ impl RtpsReader {
     }
 
     /// Queue a sample, applying the reader's own history bound.
-    fn deliver(
-        &mut self,
-        writer: Guid,
-        sequence_number: SequenceNumber,
-        payload: Vec<u8>,
-        timestamp: Option<Time>,
-        kind: ChangeKind,
-        now: Instant,
-    ) {
-        self.last_sample_at.insert(writer, now);
-        self.ready.push_back(Sample {
-            writer,
-            sequence_number,
-            payload,
-            source_timestamp: timestamp,
-            received_at: now,
-            kind,
-            instance: InstanceHandle::NIL,
-        });
-        let requested = self
-            .config
-            .qos
-            .history
-            .retained()
-            .unwrap_or(MAX_UNTAKEN_SAMPLES);
-        let depth = requested.clamp(1, MAX_UNTAKEN_SAMPLES);
-        while self.ready.len() > depth {
+    ///
+    /// `KEEP_LAST n` keeps the newest `n` samples of the sample's **instance**
+    /// and drops the oldest of that instance only — the DDS rule, and the one
+    /// that lets a discovery reader hold every announcement a replayed
+    /// datagram carries. On a user reader every sample is on the keyless
+    /// instance, so the bound is the topic's, exactly as before.
+    /// [`MAX_UNTAKEN_SAMPLES`] then caps the queue as a whole whatever the
+    /// policy: it is `KEEP_ALL`'s only bound, and it keeps a reader that is
+    /// handed endless distinct instances finite.
+    fn deliver(&mut self, sample: Sample) {
+        self.last_sample_at
+            .insert(sample.writer, sample.received_at);
+        let instance = sample.instance;
+        self.ready.push_back(sample);
+        if let Some(requested) = self.config.qos.history.retained() {
+            let depth = requested.clamp(1, MAX_UNTAKEN_SAMPLES);
+            if self.ready.len() > depth {
+                let mut held = self
+                    .ready
+                    .iter()
+                    .filter(|waiting| waiting.instance == instance)
+                    .count();
+                while held > depth {
+                    let Some(oldest) = self
+                        .ready
+                        .iter()
+                        .position(|waiting| waiting.instance == instance)
+                    else {
+                        break;
+                    };
+                    if self.ready.remove(oldest).is_some() {
+                        self.dropped = self.dropped.saturating_add(1);
+                    }
+                    held = held.saturating_sub(1);
+                }
+            }
+        }
+        while self.ready.len() > MAX_UNTAKEN_SAMPLES {
             self.ready.pop_front();
             self.dropped = self.dropped.saturating_add(1);
         }
@@ -666,10 +746,18 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use crate::behavior::cache::InstanceHandle;
     use crate::behavior::fragment::fragment_sample;
+    use crate::behavior::writer::{RtpsWriter, WriterConfig};
+    use crate::discovery::endpoint_data::DiscoveredWriterData;
+    use crate::discovery::matching::WriterQos;
     use crate::discovery::qos::HistoryQos;
-    use crate::messages::{DataPayload, Submessage};
-    use crate::structure::{EntityId, EntityKind, Locator, SequenceNumberSet, VendorId};
+    use crate::messages::{DataPayload, Submessage, inline_qos_encoding};
+    use crate::structure::{
+        ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER, ENTITYID_SEDP_BUILTIN_PUBLICATIONS_WRITER,
+        EntityId, EntityKind, Locator, SequenceNumberSet, VendorId,
+    };
+    use astrs_cdr::{Endianness, ParameterId, ParameterList};
     use std::net::Ipv4Addr;
 
     fn writer_guid() -> Guid {
@@ -1058,6 +1146,91 @@ mod tests {
     }
 
     #[test]
+    fn a_gap_of_any_length_abandons_exactly_the_fragment_series_it_names() {
+        let mut reader = reader(ReaderQos::reliable(10));
+        reader.match_writer(proxy(true));
+        let now = Instant::now();
+        let payload = vec![0x3c_u8; 3_000];
+        // Two series part-assembled: one inside the run the GAP names, one
+        // past it.
+        for number in [7_i64, 20_000_000] {
+            let fragments = fragment_sample(
+                EntityId::UNKNOWN,
+                writer_guid().entity_id,
+                SequenceNumber::new(number),
+                &payload,
+                1_000,
+                1_400,
+            )
+            .unwrap();
+            reader
+                .on_data_frag(writer_guid().prefix, &fragments[0], None, now)
+                .unwrap();
+        }
+        assert_eq!(reader.reassembler().len(), 2);
+
+        // Sixteen million numbers in one run. Walked number by number, a GAP
+        // like this held the participant's lock for as long as counting took
+        // — and `bitmapBase = 2^62` is just as valid. Asked of the two series
+        // in flight instead, it costs two lookups.
+        let last = 1_i64 << 24;
+        let gap = Gap::contiguous(
+            EntityId::UNKNOWN,
+            writer_guid().entity_id,
+            SequenceNumber::new(2),
+            SequenceNumber::new(last),
+        );
+        assert_eq!(
+            reader.on_gap(writer_guid().prefix, &gap),
+            usize::try_from(last - 1).unwrap(),
+            "the whole run, not the first MAX_TRACKED numbers of it"
+        );
+        assert_eq!(
+            reader
+                .reassembler()
+                .in_flight(writer_guid())
+                .map(SequenceNumber::value)
+                .collect::<Vec<_>>(),
+            vec![20_000_000],
+            "the series the GAP names is abandoned, and only it"
+        );
+        let proxy = reader.matched_writers().next().expect("matched");
+        assert!(proxy.is_pending_irrelevant(SequenceNumber::new(last)));
+        assert!(!proxy.is_satisfied(SequenceNumber::FIRST));
+    }
+
+    #[test]
+    fn a_gap_naming_two_to_the_sixty_second_numbers_is_taken_at_once() {
+        // Walked number by number — by the proxy or by the reassembly
+        // cleanup — this GAP would never finish, and the participant's lock
+        // would be held while it tried. So it runs on a thread of its own,
+        // and taking longer than the watchdog allows is a failure rather than
+        // a hang: the answer it waits for costs a few map operations.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut reader = reader(ReaderQos::reliable(10));
+            reader.match_writer(proxy(true));
+            let gap = Gap::contiguous(
+                EntityId::UNKNOWN,
+                writer_guid().entity_id,
+                SequenceNumber::FIRST,
+                SequenceNumber::new(1 << 62),
+            );
+            let added = reader.on_gap(writer_guid().prefix, &gap);
+            let acked = reader
+                .matched_writers()
+                .next()
+                .map(WriterProxy::acked_through);
+            let _ = sender.send((added, acked));
+        });
+        let (added, acked) = receiver
+            .recv_timeout(StdDuration::from_secs(30))
+            .expect("a GAP of any length is applied at once");
+        assert_eq!(added, usize::try_from(1_i64 << 62).unwrap());
+        assert_eq!(acked, Some(SequenceNumber::new(1 << 62)));
+    }
+
+    #[test]
     fn unmatching_a_writer_forgets_its_fragments() {
         let mut reader = reader(ReaderQos::reliable(10));
         reader.match_writer(proxy(true));
@@ -1325,5 +1498,308 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Instances: a discovery reader keeps one announcement per endpoint
+    // -----------------------------------------------------------------------
+
+    /// The peer's SEDP publications writer.
+    fn sedp_writer_guid() -> Guid {
+        Guid::new(
+            writer_guid().prefix,
+            ENTITYID_SEDP_BUILTIN_PUBLICATIONS_WRITER,
+        )
+    }
+
+    /// This participant's SEDP publications reader, with the builtin QoS —
+    /// `KEEP_LAST 1` — and matched to [`sedp_writer_guid`].
+    fn sedp_reader() -> RtpsReader {
+        let mut reader = RtpsReader::new(
+            ReaderConfig::new(
+                Guid::new(
+                    reader_guid().prefix,
+                    ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER,
+                ),
+                crate::discovery::sedp::publications_topic().unwrap(),
+            )
+            .with_qos(ReaderQos::builtin_sedp()),
+        );
+        reader.match_writer(WriterProxy::new(
+            sedp_writer_guid(),
+            vec![Locator::udpv4(Ipv4Addr::LOCALHOST, 45_000)],
+            true,
+        ));
+        reader
+    }
+
+    /// One of the peer's user writers, by entity key.
+    fn endpoint(key: u32) -> Guid {
+        Guid::new(
+            writer_guid().prefix,
+            EntityId::user_defined(key, EntityKind::USER_WRITER_NO_KEY),
+        )
+    }
+
+    fn instance_of(guid: Guid) -> InstanceHandle {
+        InstanceHandle::new(guid.to_bytes())
+    }
+
+    /// The SEDP publication sample that announces `endpoint`.
+    fn announcement(endpoint: Guid) -> Vec<u8> {
+        DiscoveredWriterData::new(endpoint, "rt/chatter", "std_msgs::msg::dds_::String_")
+            .unwrap()
+            .to_payload()
+            .unwrap()
+            .into_cow()
+            .into_owned()
+    }
+
+    /// The disposal of `endpoint`, exactly as the peer's writer shapes it.
+    fn disposal(endpoint: Guid) -> Vec<u8> {
+        let mut writer = RtpsWriter::new(
+            WriterConfig::new(
+                sedp_writer_guid(),
+                crate::discovery::sedp::publications_topic().unwrap(),
+            )
+            .with_qos(WriterQos::builtin_sedp()),
+        );
+        let number = writer.dispose(endpoint, Instant::now()).unwrap();
+        writer.cache().get(number).unwrap().payload.clone()
+    }
+
+    /// A `DATA` from the peer's SEDP publications writer.
+    fn sedp_data(number: i64, payload: DataPayload<'_>) -> Data<'_> {
+        Data::new(
+            EntityId::UNKNOWN,
+            sedp_writer_guid().entity_id,
+            SequenceNumber::new(number),
+            payload,
+        )
+    }
+
+    /// An inline QoS list carrying one `PID_KEY_HASH`.
+    fn key_hash_qos(octets: [u8; 16]) -> ParameterList<'static> {
+        let mut list = ParameterList::new(inline_qos_encoding(Endianness::Little));
+        list.push_octets(ParameterId::new(astrs_cdr::pid::KEY_HASH), octets.to_vec())
+            .unwrap();
+        list
+    }
+
+    fn held(reader: &mut RtpsReader) -> Vec<(i64, ChangeKind, InstanceHandle)> {
+        reader
+            .take_all()
+            .into_iter()
+            .map(|sample| (sample.sequence_number.value(), sample.kind, sample.instance))
+            .collect()
+    }
+
+    #[test]
+    fn a_discovery_reader_keeps_one_announcement_per_endpoint() {
+        let mut reader = sedp_reader();
+        let now = Instant::now();
+        let prefix = sedp_writer_guid().prefix;
+        let (first, second) = (announcement(endpoint(1)), announcement(endpoint(2)));
+
+        // Two announcements before anything is taken: what one datagram of a
+        // replay to a late joiner delivers.
+        for (number, payload) in [(1, &first), (2, &second)] {
+            let data = sedp_data(
+                number,
+                DataPayload::Data(SerializedPayload::new(&payload[..])),
+            );
+            assert!(reader.on_data(prefix, &data, None, now).unwrap());
+        }
+        assert_eq!(
+            reader.len(),
+            2,
+            "KEEP_LAST 1 is one announcement per endpoint, not one per topic"
+        );
+        assert_eq!(reader.dropped_count(), 0);
+
+        // Re-announcing an endpoint replaces its own announcement, no other.
+        let again = announcement(endpoint(1));
+        let data = sedp_data(3, DataPayload::Data(SerializedPayload::new(&again[..])));
+        assert!(reader.on_data(prefix, &data, None, now).unwrap());
+        assert_eq!(
+            held(&mut reader),
+            vec![
+                (2, ChangeKind::Alive, instance_of(endpoint(2))),
+                (3, ChangeKind::Alive, instance_of(endpoint(1))),
+            ]
+        );
+        assert_eq!(reader.dropped_count(), 1);
+    }
+
+    #[test]
+    fn a_disposal_lands_on_the_instance_of_the_endpoint_it_names() {
+        let mut reader = sedp_reader();
+        let now = Instant::now();
+        let prefix = sedp_writer_guid().prefix;
+        let (first, second) = (announcement(endpoint(1)), announcement(endpoint(2)));
+        let retired = disposal(endpoint(1));
+
+        for (number, payload) in [(1, &first), (2, &second)] {
+            let data = sedp_data(
+                number,
+                DataPayload::Data(SerializedPayload::new(&payload[..])),
+            );
+            reader.on_data(prefix, &data, None, now).unwrap();
+        }
+        let data = sedp_data(3, DataPayload::Key(SerializedPayload::new(&retired[..])));
+        assert!(reader.on_data(prefix, &data, None, now).unwrap());
+
+        assert_eq!(
+            held(&mut reader),
+            vec![
+                (2, ChangeKind::Alive, instance_of(endpoint(2))),
+                (3, ChangeKind::NotAliveDisposed, instance_of(endpoint(1))),
+            ],
+            "the disposal replaces its endpoint's announcement and leaves the other"
+        );
+    }
+
+    #[test]
+    fn a_key_hash_names_the_instance_when_the_peer_sends_one() {
+        let mut reader = sedp_reader();
+        let now = Instant::now();
+        let payload = announcement(endpoint(1));
+        let data = sedp_data(1, DataPayload::Data(SerializedPayload::new(&payload[..])))
+            .with_inline_qos(key_hash_qos([9; 16]));
+        assert!(
+            reader
+                .on_data(sedp_writer_guid().prefix, &data, None, now)
+                .unwrap()
+        );
+        assert_eq!(
+            reader.take().expect("a sample").instance,
+            InstanceHandle::new([9; 16]),
+            "a key hash the writer sent is authoritative"
+        );
+    }
+
+    #[test]
+    fn a_fragmented_announcement_is_filed_under_its_endpoint() {
+        let mut reader = sedp_reader();
+        let now = Instant::now();
+        let payload = announcement(endpoint(4));
+        // A budget that fits one 64-octet fragment per submessage, so the
+        // announcement arrives as a real series.
+        let fragments = fragment_sample(
+            EntityId::UNKNOWN,
+            sedp_writer_guid().entity_id,
+            SequenceNumber::FIRST,
+            &payload,
+            64,
+            128,
+        )
+        .unwrap();
+        assert!(fragments.len() > 1, "the announcement must really fragment");
+        for fragment in &fragments {
+            reader
+                .on_data_frag(sedp_writer_guid().prefix, fragment, None, now)
+                .unwrap();
+        }
+        let sample = reader.take().expect("the reassembled announcement");
+        assert_eq!(sample.as_slice(), payload.as_slice());
+        assert_eq!(sample.instance, instance_of(endpoint(4)));
+    }
+
+    #[test]
+    fn a_user_reader_keeps_its_depth_across_the_topic_whatever_the_key_hash() {
+        let mut reader = reader(ReaderQos {
+            history: HistoryQos::keep_last(2),
+            ..ReaderQos::reliable(2)
+        });
+        reader.match_writer(proxy(true));
+        let now = Instant::now();
+        for value in 1..=4_u8 {
+            let data = data(i64::from(value), b"aaaa").with_inline_qos(key_hash_qos([value; 16]));
+            reader
+                .on_data(writer_guid().prefix, &data, None, now)
+                .unwrap();
+        }
+        assert_eq!(reader.len(), 2, "a user topic is keyless: one instance");
+        assert_eq!(reader.dropped_count(), 2);
+        assert!(
+            reader
+                .take_all()
+                .iter()
+                .all(|sample| sample.instance.is_nil())
+        );
+    }
+
+    /// Answer one fresh `HEARTBEAT` from `writer` — every number up to
+    /// `last` missing — and return the count the `ACKNACK` carried.
+    fn answer_heartbeat(reader: &mut RtpsReader, writer: Guid, last: i64, count: i32) -> i32 {
+        let heartbeat = Heartbeat::new(
+            EntityId::UNKNOWN,
+            writer.entity_id,
+            SequenceNumber::FIRST,
+            SequenceNumber::new(last),
+            count,
+        );
+        assert!(reader.on_heartbeat(writer.prefix, &heartbeat));
+        let outbound = reader.produce(Instant::now()).unwrap();
+        let counts: Vec<i32> = outbound
+            .iter()
+            .flat_map(|item| {
+                Message::decode(&item.datagram)
+                    .unwrap()
+                    .iter()
+                    .filter_map(|submessage| submessage.as_acknack().map(|acknack| acknack.count))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(counts.len(), 1, "one heartbeat, one answer");
+        counts[0]
+    }
+
+    #[test]
+    fn a_writer_matched_again_is_answered_with_a_count_it_has_not_seen() {
+        // The writer compares ACKNACK counts per reader. One that kept its
+        // proxy for this reader across this reader's forgetting it has
+        // accepted count 3; a new proxy that started again at one would be
+        // stale to it for three more heartbeat periods — and its first
+        // ACKNACK is the one that asks for everything it forgot.
+        let mut reader = reader(ReaderQos::reliable(10));
+        reader.match_writer(proxy(true));
+        for count in 1..=3 {
+            assert_eq!(
+                answer_heartbeat(&mut reader, writer_guid(), 5, count),
+                count
+            );
+        }
+
+        assert!(reader.unmatch_writer(writer_guid()));
+        reader.match_writer(proxy(true));
+        assert_eq!(
+            answer_heartbeat(&mut reader, writer_guid(), 5, 1),
+            4,
+            "the new proxy counts on from the old one"
+        );
+
+        // The one number is the reader's, not the writer's: a writer never
+        // matched before also starts above everything this reader dropped,
+        // which a count need not start at one to do.
+        let stranger = Guid::new(
+            writer_guid().prefix,
+            EntityId::user_defined(9, EntityKind::USER_WRITER_NO_KEY),
+        );
+        assert!(reader.unmatch_writer(writer_guid()));
+        reader.match_writer(WriterProxy::new(
+            stranger,
+            vec![Locator::udpv4(Ipv4Addr::LOCALHOST, 45_000)],
+            true,
+        ));
+        assert_eq!(answer_heartbeat(&mut reader, stranger, 5, 1), 5);
+
+        // Re-matching a writer that is still matched changes nothing.
+        reader.match_writer(WriterProxy::new(
+            stranger,
+            vec![Locator::udpv4(Ipv4Addr::LOCALHOST, 45_000)],
+            true,
+        ));
+        assert_eq!(answer_heartbeat(&mut reader, stranger, 5, 2), 6);
     }
 }

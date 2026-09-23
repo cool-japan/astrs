@@ -12,9 +12,12 @@
 //! `KEEP_LAST n` retains `n` samples *per instance*, not `n` in total. An
 //! instance is identified by the key hash of the sample's key fields; a
 //! keyless topic — which is every ROS 2 topic — has exactly one instance,
-//! [`InstanceHandle::NIL`]. Implementing the per-instance rule even though
-//! ROS never exercises it costs one `BTreeMap` lookup and means the cache is
-//! correct the day a keyed topic arrives.
+//! [`InstanceHandle::NIL`]. The keyed topics this crate writes itself are the
+//! builtin discovery ones: SEDP files each endpoint's announcement under the
+//! endpoint's GUID, so the builtin writers' `KEEP_LAST 1` is one announcement
+//! *per endpoint*, and the replay a late joiner receives names every one of
+//! them. On a user topic the rule costs nothing ROS ever notices, and the
+//! cache is correct the day a keyed topic arrives.
 //!
 //! # What eviction is, and is not
 //!
@@ -36,6 +39,7 @@
 //! contract in a shape a Rust caller can match on.
 
 use std::collections::BTreeMap;
+use std::ops::Bound;
 use std::time::{Duration as StdDuration, Instant};
 
 use crate::behavior::error::{BehaviorError, BehaviorResult};
@@ -344,6 +348,28 @@ impl HistoryCache {
     /// Every sequence number held, ascending.
     pub fn sequence_numbers(&self) -> impl Iterator<Item = SequenceNumber> + '_ {
         self.changes.keys().copied()
+    }
+
+    /// Every sequence number held above `after`, ascending.
+    ///
+    /// What a writer walks to serve a reader: the numbers it still holds,
+    /// never the numbers in between. A history that lost a hundred thousand
+    /// numbers between two changes costs this iterator one step, not a
+    /// hundred thousand.
+    pub(crate) fn held_after(
+        &self,
+        after: SequenceNumber,
+    ) -> impl Iterator<Item = SequenceNumber> + '_ {
+        // An unbounded end: the one range shape `BTreeMap::range` accepts
+        // whatever `after` is.
+        self.changes
+            .range((Bound::Excluded(after), Bound::Unbounded))
+            .map(|(number, _)| *number)
+    }
+
+    /// The lowest sequence number held above `after`, if any.
+    pub(crate) fn next_held_after(&self, after: SequenceNumber) -> Option<SequenceNumber> {
+        self.held_after(after).next()
     }
 
     /// Store `change`, applying `HISTORY` and `RESOURCE_LIMITS`.

@@ -9,6 +9,126 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.1] - Unreleased
 
+### Fixed
+
+- `astrs-rtps`: a participant that discovers a peer late now learns every
+  endpoint the peer announced before it arrived, not only the newest
+  publication and the newest subscription. Every SEDP announcement and every
+  endpoint disposal was filed under the one keyless `InstanceHandle::NIL`
+  instance of the builtin writers' `KEEP_LAST 1` history, so each evicted the
+  one before it: the `TRANSIENT_LOCAL` replay a late joiner receives held one
+  endpoint per topic, and after any endpoint was deleted it held only that
+  disposal, hiding every surviving endpoint of the same kind. Announcements
+  are now filed under the endpoint's GUID and `RtpsWriter::dispose` under the
+  GUID it disposes of (a GUID is its own key hash, DDSI-RTPS §9.6.3.8); the
+  SPDP sample is filed under the participant's GUID, so the departure
+  disposal still replaces it. On the receiving side the SPDP and SEDP builtin
+  readers now apply `KEEP_LAST` per instance, taking the instance from
+  `PID_KEY_HASH` or from the GUID in the sample, instead of across the whole
+  topic, which had kept only the last announcement of each replayed datagram
+  (so the writer-side change alone would not have fixed discovery). User
+  readers are unchanged. A deleted endpoint's disposal, and a departing
+  participant's, is a *retirement*: `RtpsWriter::dispose` now sends it
+  disposed **and** unregistered (`PID_STATUS_INFO` 0x3, what DDS sends for a
+  deleted entity; receivers still read it as a disposal), and the writer drops
+  it from its history once every matched reader has it — acknowledged by a
+  reliable reader, sent to a best-effort one — together with any older change
+  of that instance, so a reader matched afterwards is `GAP`ped past it. The
+  SEDP history therefore holds the endpoints that exist however many were
+  created and deleted before, where keeping one disposal per deleted endpoint
+  would have grown it, and every late joiner's replay, for the life of the
+  participant. A disposal written through `RtpsWriter::write_change` is
+  unchanged: its instance stays registered and it is kept. Found by the Oxi3D
+  ROS 2 integration.
+- `astrs-rtps`: a best-effort reader that reached a run of 256 or more
+  consecutive sequence numbers a writer no longer held — lost to `KEEP_LAST`
+  eviction, `LIFESPAN` or a swept retirement, as a `TRANSIENT_LOCAL` late
+  joiner's replay easily does — was served that same window of missing
+  numbers on every `produce` and never received the samples after it: its
+  watermark moved only with the samples actually sent, and a best-effort
+  reader is never sent a `GAP`. Its watermark now moves over every number it
+  was served, sent or gone. Among the builtin endpoints only the SPDP writer
+  has best-effort readers (one per peer), and a peer discovered after this
+  participant had rewritten its SPDP sample 256 times was affected, although
+  the periodic SPDP announcement still reached it.
+- `astrs-rtps`: a reliable reader matched to a `TRANSIENT_LOCAL` writer whose
+  history has long runs of sequence numbers it no longer holds — the SEDP
+  writers of a node that creates and deletes endpoints for its whole life —
+  is now served the replay at once, where it advanced 256 numbers per
+  heartbeat period: after 50,000 endpoint create/delete cycles a late joiner
+  waited 390 periods (78 s at the 200 ms default) for the next endpoint. The
+  writer walks the numbers it holds rather than every number, names each run
+  of numbers it no longer holds with one `GAP` whose contiguous part is the
+  whole run (DDSI-RTPS §8.3.7.4 puts no length limit on it), and pushes a
+  `GAP` once, like a sample, instead of on every `produce` until an
+  `ACKNACK` arrived. A reader that lost that `GAP` and asks for the start of
+  the run is answered with the whole run, through the next change still held;
+  and a repair that stops short of what the reader had already been served is
+  followed by one non-final `HEARTBEAT` to that reader, so it asks for the
+  rest within a round trip rather than a heartbeat period. That is the path a
+  late joiner takes when it drops the first SEDP replay, which reaches it
+  before the peer's SPDP announcement does. On the receiving side a reader
+  keeps `GAP`ped numbers as runs, so a `GAP` is applied whole in a few map
+  operations whatever its length. It had been applied one number at a time
+  and only up to 65,536 of them, and `RtpsReader::on_gap` walked every number
+  a `GAP` named to discard fragment reassemblies, so a valid `GAP` whose run
+  held 2^62 numbers kept the participant's lock indefinitely. A number that
+  both arrived and was `GAP`ped no longer lingers behind the watermark, and a
+  repair above the writer's push frontier (a `NACK_FRAG` far ahead) no longer
+  makes it skip the samples in between. Found in adversarial review of the
+  fix above.
+- `astrs-rtps`: a participant whose lease on a peer ran out while the peer's
+  on it did not — the peer's announcements stopped arriving for a while, or
+  the two ask for different leases — now learns the peer's endpoints again
+  when it rediscovers the peer. It wires the peer's SEDP writers up from
+  scratch, but the peer's writers keep the proxy they had for its readers,
+  which says everything was acknowledged: the `ACKNACK`s asking for it all
+  were ignored, both because their count restarted at one and because a
+  writer only ever took numbers above the acknowledged watermark, and the
+  participant knew the peer with none of its endpoints until the peer
+  restarted. A reader's watermark only moves forward, so an `ACKNACK` with a
+  fresh count whose base is below the watermark can only come from a reader
+  that lost its state: `ReaderProxy::accept_acknack` now winds the watermark
+  and the served frontier back to that base, and the writer serves the reader
+  everything above it as it would a late joiner. That applies to every
+  reliable writer, not only SEDP — a `TRANSIENT_LOCAL` user reader that
+  rejoins this way is replayed the history it forgot, where before the writer
+  ignored its requests for it — except for a reader matched `VOLATILE` on
+  either side, which is never wound back at all, and an `ACKNACK` whose base
+  is below one, which never winds anything back.
+  `RtpsReader::match_writer`
+  now continues a new writer proxy's `ACKNACK` count above every count the
+  reader's dropped proxies had reached, so this crate's readers are heard at
+  once; a reader that restarts its count at one (another stack, or a
+  participant restarted under the same GUID prefix) is heard once the writer
+  has sent it ten cadence heartbeats without accepting an `ACKNACK` from it,
+  a delay ordinary reordering does not reach. Found in adversarial review of
+  the fixes above.
+- `astrs-rtps`: the mirror case — a participant whose lease on a peer ran out,
+  while the peer, still hearing it, kept it — no longer leaves the peer with a
+  ghost of every endpoint deleted meanwhile. With the peer unmatched, the SEDP
+  writers owed a deleted endpoint's retirement to nobody and swept it at
+  once; the rediscovered peer was replayed only the endpoints that exist and
+  kept the deleted one for as long as this participant lived. When a lease
+  runs out, the SEDP writers now remember the peer's readers as lapsed, with
+  what each had acknowledged, and hold every retirement since for them until
+  the peer is rediscovered — its readers are matched again and replayed the
+  retirements with the rest of the history — or it announces its departure,
+  or twice this participant's own lease has passed (a peer that cannot hear
+  this participant either gives up on it within one lease and forgets its
+  endpoints; an infinite lease holds for 200 s). The history therefore stays
+  bounded: a peer that never comes back holds retirements back for a bounded
+  time, as a matched reader that stopped acknowledging already did until its
+  lease ran out. Found in adversarial review of the fixes above.
+- `astrs-rtps`: an SEDP disposal is attributed to the endpoint whose instance
+  the builtin reader filed it under, read from `PID_KEY_HASH`, from a `PL_CDR`
+  key's `PID_ENDPOINT_GUID` or from a plain-CDR key, with the plain-CDR key as
+  the fallback. Only a plain-CDR key was read before, so a disposal that
+  carries only a key hash — which DDSI-RTPS §9.6.3.8 allows, and some stacks
+  send — was ignored, and a `PL_CDR` key was misread as the GUID of nobody:
+  either way the peer's deleted endpoint stayed known until its participant
+  left. Found in adversarial review of the fixes above.
+
 ## [0.1.0] - 2026-09-06
 
 Initial build-out: the full P0 crate catalog, plus a

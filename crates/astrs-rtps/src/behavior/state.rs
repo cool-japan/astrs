@@ -44,6 +44,15 @@ use crate::structure::{
     Time,
 };
 
+/// How many of this participant's own leases a peer whose lease ran out is
+/// owed the retirements of the endpoints deleted meanwhile. See
+/// [`State::lapse_deadline`].
+const LAPSE_RETENTION_LEASES: u32 = 2;
+
+/// How long a peer whose lease ran out is owed those retirements when this
+/// participant's own lease is infinite: twice the default lease.
+const LAPSE_RETENTION_WITHOUT_LEASE: StdDuration = StdDuration::from_secs(200);
+
 /// The protocol state one lock covers.
 #[derive(Debug)]
 pub(crate) struct State {
@@ -242,18 +251,28 @@ impl State {
     }
 
     /// Write (or rewrite) the SPDP sample this participant repeats.
+    ///
+    /// Filed under the participant's own instance — its GUID is the
+    /// `DCPSParticipant` key — because that is where
+    /// [`dispose_participant`](Self::dispose_participant) files the disposal.
+    /// On one instance the disposal replaces this sample; on two, the sample
+    /// would outlive the disposal in the history and be announced again.
     pub(crate) fn refresh_spdp_sample(&mut self, now: Instant) -> BehaviorResult<()> {
         let payload = self.spdp.local().to_payload()?;
+        let guid = self.spdp.guid();
         let writer = self
             .writers
             .get_mut(&ENTITYID_SPDP_BUILTIN_PARTICIPANT_WRITER)
             .ok_or(BehaviorError::UnknownWriter {
-                guid: Guid::new(
-                    self.spdp.guid().prefix,
-                    ENTITYID_SPDP_BUILTIN_PARTICIPANT_WRITER,
-                ),
+                guid: Guid::new(guid.prefix, ENTITYID_SPDP_BUILTIN_PARTICIPANT_WRITER),
             })?;
-        let number = writer.write(payload.into_cow().into_owned(), None, now)?;
+        let number = writer.write_change(
+            payload.into_cow().into_owned(),
+            None,
+            ChangeKind::Alive,
+            sedp::guid_instance(guid),
+            now,
+        )?;
         self.spdp_sample = Some(number);
         Ok(())
     }
@@ -289,6 +308,13 @@ impl State {
     }
 
     /// Announce one local endpoint over SEDP.
+    ///
+    /// The announcement is filed under the endpoint's own instance, its GUID.
+    /// The builtin writer keeps `KEEP_LAST 1` of each instance, so a peer
+    /// that discovers this participant late is replayed every endpoint's
+    /// announcement rather than only the newest one, and
+    /// [`dispose_endpoint`](Self::dispose_endpoint), which files its disposal
+    /// under the same GUID, replaces exactly this announcement.
     pub(crate) fn announce_endpoint(
         &mut self,
         entity_id: EntityId,
@@ -296,6 +322,7 @@ impl State {
         now: Instant,
     ) -> BehaviorResult<Vec<(Channel, Outbound)>> {
         let compat = self.spdp.config().compat;
+        let instance = sedp::guid_instance(Guid::new(self.spdp.guid().prefix, entity_id));
         let payload = if is_writer {
             let Some(writer) = self.writers.get(&entity_id) else {
                 return Ok(Vec::new());
@@ -315,7 +342,13 @@ impl State {
         let Some(writer) = self.writers.get_mut(&announcer) else {
             return Ok(Vec::new());
         };
-        writer.write(payload.into_cow().into_owned(), None, now)?;
+        writer.write_change(
+            payload.into_cow().into_owned(),
+            None,
+            ChangeKind::Alive,
+            instance,
+            now,
+        )?;
         Ok(writer
             .produce(now)?
             .into_iter()
@@ -330,6 +363,13 @@ impl State {
     /// a hundred seconds by default — and spends that whole time sending
     /// samples into a void. The receive side of this already existed;
     /// this is what makes it reachable between two AstRS participants.
+    ///
+    /// Written by [`RtpsWriter::dispose`], like an endpoint's: disposed and
+    /// unregistered, and announced straight out of the history — which is
+    /// why the writer never sweeps a retirement before the next write or
+    /// `produce`. The SPDP writer's only matched readers are the peers'
+    /// best-effort SPDP readers, so the next `produce` sends each its copy
+    /// and drops it; one with no reader matched drops it at once.
     pub(crate) fn dispose_participant(
         &mut self,
         now: Instant,
@@ -386,6 +426,11 @@ impl State {
         let Some(writer) = self.writers.get_mut(&announcer) else {
             return Ok((true, Vec::new()));
         };
+        // Filed under `guid`, the instance `announce_endpoint` filed the
+        // announcement under: the disposal replaces that one and no other.
+        // It is a retirement, so it leaves the history once every matched
+        // peer has it — deleting endpoints for the whole life of the
+        // participant never grows this writer. See `RtpsWriter::dispose`.
         writer.dispose(guid, now)?;
         let outbound = writer
             .produce(now)?
@@ -484,9 +529,36 @@ impl State {
     }
 
     /// Drop remote participants whose lease has run out, and unwire them.
+    ///
+    /// # A lease that ran out here says nothing about the peer
+    ///
+    /// The peer may be alive, and may never have stopped hearing this
+    /// participant: its announcements were lost on the way here, or it was
+    /// slow, while this participant's reached it. Then it still holds every
+    /// endpoint announced here, and the SEDP writers still owe it the
+    /// retirement of each one deleted from now on — a retirement they would
+    /// otherwise sweep at once, with nobody matched to be owed it, leaving
+    /// the peer with a ghost endpoint for as long as this participant lives.
+    /// So the SEDP writers record the peer's readers as *lapsed* rather than
+    /// dropping them, and hold those retirements until the peer is
+    /// rediscovered — its readers are matched again and replayed them — or
+    /// until [`lapse_deadline`](Self::lapse_deadline) passes.
+    ///
+    /// The other half of the same event is the peer's: it may have expired
+    /// this participant while this participant kept it, and then it forgot
+    /// what the SEDP writers here had delivered to it. That is the writer's
+    /// business, and it sees it in the peer's next `ACKNACK` — see
+    /// [`ReaderProxy::accept_acknack`](crate::behavior::proxy::ReaderProxy::accept_acknack).
     pub(crate) fn expire(&mut self, now: Instant) -> Vec<DiscoveryEvent> {
+        self.forget_lapses_due(now);
         let events = self.db.expire(now);
+        let until = self.lapse_deadline(now);
         for event in &events {
+            if let (DiscoveryEvent::ParticipantLost(participant), Some(until)) = (event, until) {
+                // Before `apply_departure` unwires the participant, which
+                // would drop the readers' watermarks with them.
+                self.lapse_participant(*participant, until);
+            }
             self.apply_departure(*event);
         }
         for lost in self.liveliness.reap(now) {
@@ -632,7 +704,12 @@ impl State {
 
         if reader == ENTITYID_SPDP_BUILTIN_PARTICIPANT_READER {
             if disposed {
-                let events = self.db.forget_participant(sample.writer.participant_guid());
+                let participant = sample.writer.participant_guid();
+                // It announced its departure, so it is owed nothing — even
+                // when its lease had already run out here and there is
+                // nothing left to forget below.
+                self.forget_lapsed_participant(participant);
+                let events = self.db.forget_participant(participant);
                 for event in &events {
                     self.apply_departure(*event);
                 }
@@ -660,8 +737,7 @@ impl State {
             }
         } else if reader == ENTITYID_SEDP_BUILTIN_PUBLICATIONS_READER {
             if disposed {
-                if let Some(guid) = guid_from_key(&sample.payload)
-                    && let Some(event) = self.db.forget_writer(guid)
+                if let Some(event) = self.forget_disposed(sample, |db, guid| db.forget_writer(guid))
                 {
                     self.apply_departure(event);
                     dispatch.events.push(event);
@@ -679,8 +755,7 @@ impl State {
             }
         } else if reader == ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_READER {
             if disposed {
-                if let Some(guid) = guid_from_key(&sample.payload)
-                    && let Some(event) = self.db.forget_reader(guid)
+                if let Some(event) = self.forget_disposed(sample, |db, guid| db.forget_reader(guid))
                 {
                     self.apply_departure(event);
                     dispatch.events.push(event);
@@ -709,6 +784,93 @@ impl State {
                 }
             }
         }
+    }
+
+    /// Forget the remote endpoint an SEDP disposal names, with `forget`.
+    ///
+    /// The endpoint is the GUID the reader filed the disposal under, which
+    /// it read from `PID_KEY_HASH`, from a `PL_CDR` key's
+    /// `PID_ENDPOINT_GUID` or from a plain-CDR key — whichever the peer sent
+    /// (see [`sedp::builtin_instance`]); on the SEDP topics a key hash *is*
+    /// the endpoint's GUID. Reading the plain-CDR key alone, as this once
+    /// did, ignored a disposal that carries only a key hash, which the spec
+    /// allows, and misread a `PL_CDR` key as a GUID of garbage: either way
+    /// the endpoint stayed known here for as long as its participant lived.
+    /// The plain-CDR reading is kept as the fallback when the instance names
+    /// no endpoint this participant knows.
+    fn forget_disposed(
+        &mut self,
+        sample: &Sample,
+        forget: impl Fn(&mut DiscoveryDb, Guid) -> Option<DiscoveryEvent>,
+    ) -> Option<DiscoveryEvent> {
+        let named = sedp::guid_of_instance(sample.instance);
+        let keyed = sedp::guid_from_key(&sample.payload);
+        [named, keyed]
+            .into_iter()
+            .flatten()
+            .find_map(|guid| forget(&mut self.db, guid))
+    }
+
+    /// The builtin writers whose retirements say an endpoint is gone, and
+    /// which therefore keep lapsed readers: see [`expire`](Self::expire).
+    const ENDPOINT_ANNOUNCERS: [EntityId; 2] = [
+        ENTITYID_SEDP_BUILTIN_PUBLICATIONS_WRITER,
+        ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_WRITER,
+    ];
+
+    /// Record every reader `participant` has on the SEDP writers as lapsed,
+    /// until `until`.
+    fn lapse_participant(&mut self, participant: Guid, until: Instant) {
+        for entity_id in Self::ENDPOINT_ANNOUNCERS {
+            if let Some(writer) = self.writers.get_mut(&entity_id) {
+                writer.lapse_participant(participant, until);
+            }
+        }
+    }
+
+    /// Forget every lapsed reader `participant` has on the SEDP writers.
+    fn forget_lapsed_participant(&mut self, participant: Guid) {
+        for entity_id in Self::ENDPOINT_ANNOUNCERS {
+            if let Some(writer) = self.writers.get_mut(&entity_id) {
+                writer.forget_lapsed_participant(participant);
+            }
+        }
+    }
+
+    /// Forget every lapsed reader on the SEDP writers whose time is up.
+    fn forget_lapses_due(&mut self, now: Instant) {
+        for entity_id in Self::ENDPOINT_ANNOUNCERS {
+            if let Some(writer) = self.writers.get_mut(&entity_id) {
+                writer.forget_lapses_due(now);
+            }
+        }
+    }
+
+    /// Until when a peer whose lease ran out at `now` is owed the
+    /// retirements of the endpoints deleted here meanwhile.
+    ///
+    /// Twice this participant's own lease. A peer that cannot hear this
+    /// participant either gives up on it within one lease of the last
+    /// announcement it heard, which came before the peer's own went silent
+    /// here, and forgets every endpoint with it: nothing is owed after that.
+    /// The second lease is for the peer's next announcement to arrive here
+    /// once the outage ends. A peer that heard this participant all along
+    /// never gives up on it, and one that stays unheard for longer keeps a
+    /// ghost of an endpoint deleted meanwhile; nothing bounded can be owed to
+    /// a peer that may be gone for good. An infinite lease holds for
+    /// [`LAPSE_RETENTION_WITHOUT_LEASE`]. `None` only when the deadline would
+    /// overflow the clock.
+    fn lapse_deadline(&self, now: Instant) -> Option<Instant> {
+        let retention = self
+            .spdp
+            .config()
+            .lease_duration
+            .to_std()
+            .map_or(LAPSE_RETENTION_WITHOUT_LEASE, |lease| {
+                lease.saturating_mul(LAPSE_RETENTION_LEASES)
+            });
+        now.checked_add(retention)
+            .or_else(|| now.checked_add(LAPSE_RETENTION_WITHOUT_LEASE))
     }
 
     /// Everything the endpoints want to send after a datagram was absorbed.
@@ -890,14 +1052,5 @@ impl State {
     }
 }
 
-/// Read a GUID out of a disposal sample's key payload.
-///
-/// A `DATA` that disposes of a builtin instance carries the key rather than
-/// the sample, and for the discovery topics the key *is* the endpoint's GUID:
-/// sixteen octets after the four-octet encapsulation header. Anything else is
-/// a disposal this build cannot attribute, and is ignored rather than guessed
-/// at.
-pub(crate) fn guid_from_key(payload: &[u8]) -> Option<Guid> {
-    let body = payload.get(astrs_cdr::ENCAPSULATION_HEADER_LEN..)?;
-    Guid::from_slice(body.get(..crate::structure::GUID_LEN)?)
-}
+#[cfg(test)]
+mod tests;

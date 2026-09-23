@@ -19,7 +19,10 @@
 //! resurrect a sample the writer has since GAPped.
 //!
 //! [`ReaderProxy::accept_acknack`] and [`WriterProxy::accept_heartbeat`] each
-//! return `false` for a stale one, and neither mutates when it does.
+//! return `false` for a stale one, and neither mutates when it does — with
+//! one exception, and it is not a reordering: an `ACKNACK` from a reader
+//! that forgot what it acknowledged, arriving after the writer has
+//! heartbeated that reader for a long silence (see below).
 //!
 //! # The acknowledged watermark
 //!
@@ -35,8 +38,46 @@
 //! declared irrelevant by a `GAP`. A `GAP`ped number counts as satisfied —
 //! that is the whole point of `GAP`, and a reader that kept nacking one would
 //! never make progress.
+//!
+//! # A reader that forgot
+//!
+//! A reader's watermark never moves backwards on its own: every `ACKNACK` one
+//! [`WriterProxy`] sends acknowledges at least what the one before did. So an
+//! `ACKNACK` whose base lies *below* what the reader already acknowledged,
+//! carrying a count newer than any accepted, can only come from a reader that
+//! lost its state — its participant's lease on the writer's ran out and it
+//! wired the writer up again with a fresh proxy, while the writer, which never
+//! lost the reader, kept its old one. Ignored, that reader never gets back
+//! what it forgot: the watermark says it has it, and every number it asks for
+//! is below the watermark. [`ReaderProxy::accept_acknack`] therefore takes
+//! such an `ACKNACK` at its word — the watermark and the served frontier go
+//! back to what it still has, and the writer serves it everything above as
+//! it would a late joiner — but only for a reader the writer owes its history
+//! to: one matched `VOLATILE`, on either side, starts at the present however
+//! often it rejoins, and replaying what it had already been delivered would
+//! deliver it twice.
+//!
+//! A fresh proxy counts from wherever the old one stopped
+//! ([`RtpsReader::match_writer`](crate::behavior::reader::RtpsReader::match_writer)
+//! resumes the count), so this crate's readers never trip the `Count_t` rule
+//! by rejoining. A reader that restarts its count at one — another stack, or
+//! a participant restarted under the same GUID prefix — is heard once the
+//! writer has sent it ten periodic heartbeats since it last accepted an
+//! `ACKNACK` from it: a stale submessage is one UDP reordered, and ordinary
+//! reordering does not reach that many heartbeat periods. One that does is
+//! taken as a restart, which costs a re-push of what the reader already has
+//! and nothing else.
+//!
+//! # Irrelevant numbers are runs
+//!
+//! A `GAP`'s contiguous part, `gapStart` through `gapList.bitmapBase - 1`,
+//! has no length limit (§8.3.7.4), and a writer whose history lost a hundred
+//! thousand numbers between two changes says so in one submessage. The
+//! reader keeps what it was told as runs, first to last, so taking that
+//! submessage in costs a few map operations — never one per number, and never
+//! a partial application that leaves the rest of the run to be nacked again.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::messages::{AckNack, Gap, Heartbeat};
 use crate::structure::{Guid, Locator, MAX_SET_BITS, SequenceNumber, SequenceNumberSet};
@@ -49,7 +90,23 @@ use crate::structure::{Guid, Locator, MAX_SET_BITS, SequenceNumber, SequenceNumb
 pub const MAX_REQUESTED: usize = 4_096;
 
 /// Most out-of-order sequence numbers a reader will hold per writer.
+///
+/// It bounds two things, each on its own: the samples waiting above a hole,
+/// and the runs of numbers a `GAP` declared irrelevant above one. A run
+/// counts once whatever its length.
 pub const MAX_TRACKED: usize = 65_536;
+
+/// Cadence heartbeats a writer sends a reader, with no `ACKNACK` of it
+/// accepted in between, before an `ACKNACK` with a stale count that shows the
+/// reader forgot what it acknowledged is taken all the same.
+///
+/// Two seconds at the default 200 ms heartbeat period. The `Count_t` rule
+/// exists because UDP reorders, and ordinary reordering does not put a
+/// datagram behind one sent that many heartbeat periods later; a reader that
+/// restarted its count, on the other hand, is silent from the writer's point
+/// of view for as long as its count is below the last one accepted. The
+/// module docs, which cannot link here, state the number: keep them in step.
+pub(crate) const RESTART_AFTER_HEARTBEATS: u32 = 10;
 
 /// What a stateful writer remembers about one matched reader.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +122,14 @@ pub struct ReaderProxy {
     requested: BTreeSet<SequenceNumber>,
     last_acknack_count: i32,
     active: bool,
+    /// Whether the writer owes this reader its history: true until
+    /// [`skip_history_through`](Self::skip_history_through) starts the
+    /// reader at the present. Only a reader owed the history is served it
+    /// again when it shows it forgot it — see the module docs.
+    owed_history: bool,
+    /// Cadence heartbeats sent to this reader since the writer last
+    /// accepted one of its `ACKNACK`s. See [`RESTART_AFTER_HEARTBEATS`].
+    heartbeats_unanswered: u32,
 }
 
 impl ReaderProxy {
@@ -83,6 +148,8 @@ impl ReaderProxy {
             requested: BTreeSet::new(),
             last_acknack_count: i32::MIN,
             active: true,
+            owed_history: true,
+            heartbeats_unanswered: 0,
         }
     }
 
@@ -177,7 +244,13 @@ impl ReaderProxy {
         self.acked_through
     }
 
-    /// The highest sequence number this writer has sent to the reader.
+    /// The highest sequence number this writer has served the reader.
+    ///
+    /// Served means put on the wire once, as a `DATA` or as a `GAP` saying
+    /// the number is gone: the writer's frontier for the reader. Everything
+    /// between the acknowledged watermark and here has gone out at least
+    /// once, so a writer never pushes it again unasked; what the reader lost
+    /// on the way it asks for with an `ACKNACK`, and gets as a repair.
     #[must_use]
     pub const fn highest_sent(&self) -> SequenceNumber {
         self.highest_sent
@@ -217,16 +290,43 @@ impl ReaderProxy {
     /// Apply an `ACKNACK`, unless it is stale.
     ///
     /// Returns `true` when it was applied. A stale one — a count not greater
-    /// than the last accepted — changes nothing at all.
+    /// than the last accepted — changes nothing at all, save the one case the
+    /// last paragraph below describes: a reader that forgot, heard after a
+    /// long silence.
+    ///
+    /// # A reader that forgot
+    ///
+    /// An `ACKNACK` that acknowledges *less* than the reader already had is
+    /// a reader that lost its state (see the module docs). When the writer
+    /// owes this reader its history, the watermark and the served frontier
+    /// go back to the new base, and the writer serves everything above it
+    /// again, as it would a late joiner; otherwise nothing it already has is
+    /// replayed and the watermark stays where it is. Such an `ACKNACK` is
+    /// taken even with a stale count once the writer has sent the reader a
+    /// number of periodic heartbeats without accepting one from it — the
+    /// module docs say how many — which is how a reader that restarted its
+    /// count is heard.
     pub fn accept_acknack(&mut self, acknack: &AckNack) -> bool {
-        if acknack.count <= self.last_acknack_count {
+        let watermark = acknack.acknowledged_through();
+        let forgot = self.has_forgotten(watermark);
+        let fresh = acknack.count > self.last_acknack_count;
+        let restarted = forgot && self.heartbeats_unanswered >= RESTART_AFTER_HEARTBEATS;
+        if !fresh && !restarted {
             return false;
         }
         self.last_acknack_count = acknack.count;
+        self.heartbeats_unanswered = 0;
         self.active = true;
 
-        let watermark = acknack.acknowledged_through();
-        if watermark > self.acked_through {
+        if forgot {
+            // Everything above what it still has is owed to it again. The
+            // frontier goes back too, or the writer would wait for the
+            // reader to ask for each number instead of pushing them.
+            self.acked_through = watermark;
+            if self.highest_sent > watermark {
+                self.highest_sent = watermark;
+            }
+        } else if watermark > self.acked_through {
             self.acked_through = watermark;
             self.requested.retain(|number| *number > watermark);
         }
@@ -239,6 +339,38 @@ impl ReaderProxy {
             }
         }
         true
+    }
+
+    /// True when an `ACKNACK` acknowledging through `watermark` shows a
+    /// reader that no longer has what it acknowledged before, and is owed it
+    /// again.
+    ///
+    /// Reliable readers only: a best-effort one never acknowledges, and its
+    /// watermark is the writer's own bookkeeping. And only a reader owed the
+    /// history — see [`accept_acknack`](Self::accept_acknack).
+    ///
+    /// Never below zero. §8.3.7.1.3 wants the base at one or more, and
+    /// decoding does not check it; a watermark wound back to minus one would
+    /// have the writer name sequence number zero in a `GAP`, which fails
+    /// validation and would take the writer's whole `produce` — the
+    /// participant's cadence — down with it. An `ACKNACK` with such a base is
+    /// applied as it always was: it moves nothing back.
+    fn has_forgotten(&self, watermark: SequenceNumber) -> bool {
+        self.reliable
+            && self.owed_history
+            && watermark >= SequenceNumber::ZERO
+            && watermark < self.acked_through
+    }
+
+    /// Note that the cadence sent this reader a `HEARTBEAT`.
+    ///
+    /// Counts towards [`RESTART_AFTER_HEARTBEATS`]. The writer calls it for
+    /// the periodic heartbeat only: a prompt follows an `ACKNACK` by a round
+    /// trip, and a liveliness assertion comes at whatever rate the
+    /// application asserts, so neither measures how long the reader has been
+    /// silent.
+    pub(crate) const fn note_heartbeat(&mut self) {
+        self.heartbeats_unanswered = self.heartbeats_unanswered.saturating_add(1);
     }
 
     /// Ask for `number` again.
@@ -259,6 +391,34 @@ impl ReaderProxy {
     /// the reader will stop asking, so the writer must stop remembering.
     pub fn forget_requested(&mut self, number: SequenceNumber) {
         self.requested.remove(&number);
+    }
+
+    /// Drop every outstanding retransmission request in `first ..= last`.
+    ///
+    /// What one `GAP` naming that whole run answers. Costs the requests it
+    /// drops, never the length of the run.
+    pub(crate) fn forget_requested_within(&mut self, first: SequenceNumber, last: SequenceNumber) {
+        if first > last {
+            // `BTreeSet::range` panics on an inverted range; an empty one
+            // answers nothing.
+            return;
+        }
+        let answered: Vec<SequenceNumber> = self.requested.range(first..=last).copied().collect();
+        for number in answered {
+            self.requested.remove(&number);
+        }
+    }
+
+    /// Move the served frontier up to `number`; see
+    /// [`highest_sent`](Self::highest_sent).
+    ///
+    /// Only ever forward, and only as far as the writer has served *every*
+    /// number below: a frontier that jumped over one it never sent would
+    /// leave that one to the reader's next `ACKNACK`, one heartbeat later.
+    pub(crate) fn serve_through(&mut self, number: SequenceNumber) {
+        if number > self.highest_sent {
+            self.highest_sent = number;
+        }
     }
 
     /// Forget every outstanding retransmission request.
@@ -282,10 +442,16 @@ impl ReaderProxy {
     /// current `lastChangeSequenceNumber` rather than at zero. Without this a
     /// `VOLATILE` writer replays its whole `KEEP_LAST` history to every new
     /// reader and is indistinguishable from a `TRANSIENT_LOCAL` one.
+    ///
+    /// It also marks the reader as one the writer does not owe its history,
+    /// so an `ACKNACK` from a reader that forgot what it was delivered never
+    /// winds the watermark back at all — see
+    /// [`accept_acknack`](Self::accept_acknack).
     pub fn skip_history_through(&mut self, number: SequenceNumber) {
         if number > self.highest_sent {
             self.highest_sent = number;
         }
+        self.owed_history = false;
         self.assume_acked_through(number);
     }
 
@@ -313,7 +479,10 @@ pub struct WriterProxy {
     first_available: SequenceNumber,
     last_available: SequenceNumber,
     received: BTreeSet<SequenceNumber>,
-    irrelevant: BTreeSet<SequenceNumber>,
+    /// The runs a `GAP` declared irrelevant above the watermark: first to
+    /// last, both inclusive, disjoint and never adjacent — a run that
+    /// touches another is merged into it. See the module docs.
+    irrelevant: BTreeMap<SequenceNumber, SequenceNumber>,
     acked_through: SequenceNumber,
     acknack_count: i32,
     last_heartbeat_count: i32,
@@ -333,7 +502,7 @@ impl WriterProxy {
             first_available: SequenceNumber::FIRST,
             last_available: SequenceNumber::ZERO,
             received: BTreeSet::new(),
-            irrelevant: BTreeSet::new(),
+            irrelevant: BTreeMap::new(),
             acked_through: SequenceNumber::ZERO,
             acknack_count: 0,
             last_heartbeat_count: i32::MIN,
@@ -416,7 +585,7 @@ impl WriterProxy {
     pub fn is_satisfied(&self, number: SequenceNumber) -> bool {
         number <= self.acked_through
             || self.received.contains(&number)
-            || self.irrelevant.contains(&number)
+            || self.is_pending_irrelevant(number)
     }
 
     /// True when `number` arrived out of order and is waiting above the
@@ -430,7 +599,12 @@ impl WriterProxy {
     /// watermark.
     #[must_use]
     pub fn is_pending_irrelevant(&self, number: SequenceNumber) -> bool {
-        self.irrelevant.contains(&number)
+        // The one run that can hold `number` is the last one starting at or
+        // below it.
+        self.irrelevant
+            .range(..=number)
+            .next_back()
+            .is_some_and(|(_, last)| number <= *last)
     }
 
     /// How many out-of-order arrivals are waiting above the watermark.
@@ -505,11 +679,9 @@ impl WriterProxy {
         if heartbeat.first_sn > self.first_available {
             self.first_available = heartbeat.first_sn;
             // Everything the writer has dropped is irrelevant by definition.
+            // `advance` below forgets whatever the new watermark passed.
             if self.acked_through < heartbeat.first_sn.previous() {
                 self.acked_through = heartbeat.first_sn.previous();
-                self.received.retain(|number| *number > self.acked_through);
-                self.irrelevant
-                    .retain(|number| *number > self.acked_through);
             }
         }
         if heartbeat.last_sn > self.last_available {
@@ -524,25 +696,100 @@ impl WriterProxy {
 
     /// Apply a `GAP`: every number it names is irrelevant from now on.
     ///
-    /// Returns how many numbers newly became irrelevant.
+    /// Returns how many numbers newly became irrelevant: those above the
+    /// watermark that no earlier `GAP` had already named.
+    ///
+    /// The contiguous run is taken whole, as one run, however long it is —
+    /// the cost is a few map operations, the same for three numbers as for
+    /// three billion — and so is every stretch of consecutive bits in the
+    /// bitmap. A run that starts at the watermark moves it straight to the
+    /// run's end; one that starts above a hole waits there, whole, for the
+    /// hole to close.
     pub fn accept_gap(&mut self, gap: &Gap) -> usize {
         self.active = true;
-        let mut added = 0_usize;
-        for number in gap.irrelevant() {
-            if number <= self.acked_through || self.irrelevant.contains(&number) {
-                continue;
-            }
-            if self.irrelevant.len() >= MAX_TRACKED {
-                break;
-            }
-            self.irrelevant.insert(number);
-            if number > self.last_available {
-                self.last_available = number;
-            }
-            added = added.saturating_add(1);
+        let mut added = 0_u64;
+        let mut highest: Option<SequenceNumber> = None;
+
+        let run_last = gap.contiguous_end().previous();
+        if gap.gap_start <= run_last {
+            added = added.saturating_add(self.mark_irrelevant(gap.gap_start, run_last));
+            highest = Some(run_last);
+        }
+
+        let mut stretch: Option<(SequenceNumber, SequenceNumber)> = None;
+        for number in gap.gap_list.iter() {
+            stretch = match stretch {
+                Some((first, last)) if number == last.next() => Some((first, number)),
+                Some((first, last)) => {
+                    added = added.saturating_add(self.mark_irrelevant(first, last));
+                    Some((number, number))
+                }
+                None => Some((number, number)),
+            };
+            highest = Some(highest.map_or(number, |seen| seen.max(number)));
+        }
+        if let Some((first, last)) = stretch {
+            added = added.saturating_add(self.mark_irrelevant(first, last));
+        }
+
+        if let Some(highest) = highest
+            && highest > self.last_available
+        {
+            self.last_available = highest;
         }
         self.advance();
-        added
+        usize::try_from(added).unwrap_or(usize::MAX)
+    }
+
+    /// Record `first ..= last` as irrelevant, merged with every run it
+    /// overlaps or touches.
+    ///
+    /// Numbers at or below the watermark are finished with already and are
+    /// left out. Returns how many numbers no run covered before. Refuses —
+    /// returning zero, recording nothing — only when the merge would leave
+    /// more than [`MAX_TRACKED`] runs; what it refused the reader still
+    /// lacks, so it asks for it again and the writer answers again.
+    fn mark_irrelevant(&mut self, first: SequenceNumber, last: SequenceNumber) -> u64 {
+        let first = first.max(self.acked_through.next());
+        if first > last {
+            return 0;
+        }
+        let mut merged_first = first;
+        let mut merged_last = last;
+        let mut covered = 0_u64;
+        let mut absorbed: Vec<SequenceNumber> = Vec::new();
+
+        // The one run that starts below `first` and reaches it or ends right
+        // before it.
+        if let Some((&start, &end)) = self.irrelevant.range(..first).next_back()
+            && end.next() >= first
+        {
+            absorbed.push(start);
+            merged_first = start;
+            merged_last = merged_last.max(end);
+            covered = covered.saturating_add(overlap(start, end, first, last));
+        }
+        // Every run that starts inside `first ..= last + 1`. The range is
+        // never inverted: `first <= last <= last.next()`.
+        for (&start, &end) in self.irrelevant.range(first..=last.next()) {
+            absorbed.push(start);
+            merged_last = merged_last.max(end);
+            covered = covered.saturating_add(overlap(start, end, first, last));
+        }
+
+        let runs_after = self
+            .irrelevant
+            .len()
+            .saturating_sub(absorbed.len())
+            .saturating_add(1);
+        if runs_after > MAX_TRACKED {
+            return 0;
+        }
+        for start in absorbed {
+            self.irrelevant.remove(&start);
+        }
+        self.irrelevant.insert(merged_first, merged_last);
+        span(first, last).saturating_sub(covered)
     }
 
     /// The set an `ACKNACK` should carry: base one past the watermark, bits
@@ -601,17 +848,90 @@ impl WriterProxy {
         self.acknack_count.saturating_add(1)
     }
 
-    /// Walk the watermark up over everything satisfied.
+    /// The `Count_t` of the last `ACKNACK` this proxy built, zero before the
+    /// first.
+    #[must_use]
+    pub(crate) const fn acknack_count(&self) -> i32 {
+        self.acknack_count
+    }
+
+    /// Count on from `after`: the next `ACKNACK` carries a count above it.
+    ///
+    /// What a reader does to a proxy for a writer it has matched before. The
+    /// writer compares counts per reader, not per proxy, and may still hold
+    /// the count the old proxy reached; one that started again at one would
+    /// be stale to it until it had caught up (the `Count_t` rule in the
+    /// module docs). Never lowers the count.
+    pub(crate) const fn resume_acknack_count(&mut self, after: i32) {
+        if after > self.acknack_count {
+            self.acknack_count = after;
+        }
+    }
+
+    /// Walk the watermark up over everything satisfied, then forget what it
+    /// passed.
+    ///
+    /// A number can be in both structures at once — a sample that arrived
+    /// and that a `GAP` then named — so the walk asks each in turn, and the
+    /// run it steps onto may have started below the watermark. Whatever the
+    /// walk leaves at or below the watermark is dropped from both: it is
+    /// finished with, and left behind it would count against
+    /// [`MAX_TRACKED`] for as long as the writer lives.
     fn advance(&mut self) {
         loop {
             let next = self.acked_through.next();
-            if self.received.remove(&next) || self.irrelevant.remove(&next) {
+            if self.received.remove(&next) {
                 self.acked_through = next;
-            } else {
-                break;
+                continue;
+            }
+            let run = self
+                .irrelevant
+                .range(..=next)
+                .next_back()
+                .map(|(first, last)| (*first, *last));
+            match run {
+                Some((first, last)) if last >= next => {
+                    self.irrelevant.remove(&first);
+                    self.acked_through = last;
+                }
+                _ => break,
             }
         }
+        let watermark = self.acked_through;
+        while self
+            .received
+            .first()
+            .is_some_and(|number| *number <= watermark)
+        {
+            self.received.pop_first();
+        }
+        // No run that starts at or below the watermark reaches past it: the
+        // walk would have stepped onto it. So every such run is wholly
+        // behind, and goes.
+        while self
+            .irrelevant
+            .first_key_value()
+            .is_some_and(|(first, _)| *first <= watermark)
+        {
+            self.irrelevant.pop_first();
+        }
     }
+}
+
+/// How many numbers `first ..= last` holds, saturating.
+fn span(first: SequenceNumber, last: SequenceNumber) -> u64 {
+    last.offset_from(first)
+        .map_or(0, |difference| difference.saturating_add(1))
+}
+
+/// How many numbers `a_first ..= a_last` and `b_first ..= b_last` share.
+fn overlap(
+    a_first: SequenceNumber,
+    a_last: SequenceNumber,
+    b_first: SequenceNumber,
+    b_last: SequenceNumber,
+) -> u64 {
+    span(a_first.max(b_first), a_last.min(b_last))
 }
 
 #[cfg(test)]
@@ -776,6 +1096,152 @@ mod tests {
         assert_eq!(locators.len(), 2);
         assert!(locators[0].is_loopback());
         assert!(locators[1].is_multicast());
+    }
+
+    // ── A reader that forgot ──────────────────────────────────────────────
+
+    /// The numbers one through `last`.
+    fn through(last: i64) -> Vec<i64> {
+        (1..=last).collect()
+    }
+
+    #[test]
+    fn a_reader_that_forgot_is_owed_everything_again() {
+        // The writer served the reader 1..=10 and it acknowledged them all.
+        let mut proxy = ReaderProxy::new(reader_guid(), Vec::new(), true);
+        proxy.serve_through(number(10));
+        assert!(proxy.accept_acknack(&acknack(11, &[], 1)));
+        assert_eq!(proxy.acked_through(), number(10));
+
+        // Then the reader's participant gave up on the writer's and wired it
+        // up again with a fresh proxy: a newer count, and nothing received.
+        assert!(proxy.accept_acknack(&acknack(1, &through(10), 2)));
+        assert_eq!(
+            proxy.acked_through(),
+            SequenceNumber::ZERO,
+            "the watermark goes back to what the reader still has"
+        );
+        assert_eq!(
+            proxy.highest_sent(),
+            SequenceNumber::ZERO,
+            "and the frontier with it, so the writer pushes everything again \
+             rather than waiting to be asked for it 256 numbers at a time"
+        );
+        assert_eq!(
+            proxy
+                .requested()
+                .map(SequenceNumber::value)
+                .collect::<Vec<_>>(),
+            through(10)
+        );
+        assert!(!proxy.is_satisfied(number(10)));
+    }
+
+    #[test]
+    fn a_reader_started_at_the_present_is_never_wound_back() {
+        // A VOLATILE reader, or any reader of a VOLATILE writer, is owed
+        // nothing written before it matched. Forgetting what it was delivered
+        // since does not make it owed that either: replayed, the application
+        // would be handed every sample a second time.
+        let mut proxy = ReaderProxy::new(reader_guid(), Vec::new(), true).wanting_history(false);
+        proxy.skip_history_through(number(10));
+        assert!(
+            proxy.accept_acknack(&acknack(1, &through(10), 1)),
+            "a fresh count is applied"
+        );
+        assert_eq!(proxy.acked_through(), number(10));
+        assert_eq!(proxy.highest_sent(), number(10));
+        assert_eq!(proxy.requested_count(), 0, "and nothing is asked for again");
+    }
+
+    #[test]
+    fn a_best_effort_reader_is_never_wound_back() {
+        // Its watermark is the writer's own bookkeeping, not an
+        // acknowledgement, so no ACKNACK can contradict it.
+        let mut proxy = ReaderProxy::new(reader_guid(), Vec::new(), false);
+        proxy.serve_through(number(10));
+        proxy.assume_acked_through(number(10));
+        assert!(proxy.accept_acknack(&acknack(1, &[1], 1)));
+        assert_eq!(proxy.acked_through(), number(10));
+        assert_eq!(proxy.highest_sent(), number(10));
+    }
+
+    #[test]
+    fn a_count_that_restarted_is_heard_after_a_silence_and_only_from_a_reader_that_forgot() {
+        let mut proxy = ReaderProxy::new(reader_guid(), Vec::new(), true);
+        assert!(proxy.accept_acknack(&acknack(11, &[], 40)));
+
+        // A reader counting from one again — another stack, rejoining —
+        // looks exactly like a reordered ACKNACK until the writer has
+        // heartbeated it long enough without an answer.
+        for _ in 1..RESTART_AFTER_HEARTBEATS {
+            proxy.note_heartbeat();
+            assert!(
+                !proxy.accept_acknack(&acknack(1, &[1, 2], 1)),
+                "as far as the writer can tell, reordered"
+            );
+        }
+        assert_eq!(proxy.acked_through(), number(10));
+        proxy.note_heartbeat();
+
+        // However long the silence, a stale count that does not show a
+        // forgotten state is stale: taking it would reopen the reordering
+        // hole the rule exists to close.
+        assert!(!proxy.accept_acknack(&acknack(11, &[11], 39)));
+        assert_eq!(proxy.requested_count(), 0);
+
+        assert!(proxy.accept_acknack(&acknack(1, &[1, 2], 1)));
+        assert_eq!(proxy.acked_through(), SequenceNumber::ZERO);
+        assert_eq!(
+            proxy
+                .requested()
+                .map(SequenceNumber::value)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        // The restarted count is the one the reader counts on from.
+        assert!(proxy.accept_acknack(&acknack(3, &[], 2)));
+        assert_eq!(proxy.acked_through(), number(2));
+        assert!(!proxy.accept_acknack(&acknack(1, &[1], 2)), "stale again");
+    }
+
+    #[test]
+    fn an_accepted_acknack_starts_the_silence_again() {
+        let mut proxy = ReaderProxy::new(reader_guid(), Vec::new(), true);
+        assert!(proxy.accept_acknack(&acknack(11, &[], 40)));
+        for _ in 0..RESTART_AFTER_HEARTBEATS {
+            proxy.note_heartbeat();
+        }
+        assert!(
+            proxy.accept_acknack(&acknack(11, &[], 41)),
+            "the reader answers after all"
+        );
+        proxy.note_heartbeat();
+        assert!(
+            !proxy.accept_acknack(&acknack(1, &[1], 1)),
+            "one heartbeat of silence is not enough"
+        );
+        assert_eq!(proxy.acked_through(), number(10));
+    }
+
+    #[test]
+    fn a_base_below_one_never_winds_the_watermark_back() {
+        // §8.3.7.1.3 wants a base of one or more, and decoding does not
+        // check it. Taken as a reader that forgot, a base of zero would wind
+        // the watermark to minus one and ask for sequence number zero, which
+        // no GAP may name. It is applied as it always was: nothing moves.
+        let mut proxy = ReaderProxy::new(reader_guid(), Vec::new(), true);
+        assert!(proxy.accept_acknack(&acknack(11, &[], 1)));
+        let invalid = AckNack::new(
+            reader_guid().entity_id,
+            writer_guid().entity_id,
+            SequenceNumberSet::new(SequenceNumber::ZERO),
+            2,
+        );
+        assert!(proxy.accept_acknack(&invalid), "a fresh count, as before");
+        assert_eq!(proxy.acked_through(), number(10));
+        assert_eq!(proxy.highest_sent(), SequenceNumber::ZERO);
+        assert_eq!(proxy.requested_count(), 0);
     }
 
     #[test]
@@ -975,6 +1441,204 @@ mod tests {
         assert_eq!(proxy.locators().len(), 1);
         proxy.deactivate();
         assert!(!proxy.is_active());
+    }
+
+    fn gap(start: i64, run_end: i64, bits: &[i64]) -> Gap {
+        // `run_end` is the run's last number; the bitmap is based one past it.
+        let set =
+            SequenceNumberSet::from_numbers(number(run_end + 1), bits.iter().copied().map(number))
+                .expect("the test's bits are in window");
+        Gap::new(
+            reader_guid().entity_id,
+            writer_guid().entity_id,
+            number(start),
+            set,
+        )
+    }
+
+    #[test]
+    fn a_run_at_the_watermark_moves_it_in_one_step() {
+        let mut proxy = WriterProxy::new(writer_guid(), Vec::new(), true);
+        proxy.accept_data(number(1));
+        assert_eq!(proxy.accept_gap(&gap(2, 1_000_000, &[])), 999_999);
+        assert_eq!(proxy.acked_through(), number(1_000_000));
+        assert_eq!(proxy.last_available(), number(1_000_000));
+        assert!(proxy.is_caught_up());
+    }
+
+    #[test]
+    fn a_run_above_a_hole_is_remembered_whole_until_the_hole_closes() {
+        // The late joiner whose DATA 1 was lost while the GAP for the
+        // hundred thousand numbers after it arrived: the run must wait
+        // above the hole in one piece, not in the first MAX_TRACKED numbers
+        // of it.
+        let mut proxy = WriterProxy::new(writer_guid(), Vec::new(), true);
+        assert_eq!(proxy.accept_gap(&gap(2, 100_001, &[])), 100_000);
+        assert!(proxy.accept_data(number(100_002)));
+        assert_eq!(proxy.acked_through(), SequenceNumber::ZERO);
+        for pending in [2, MAX_TRACKED as i64 + 2, 100_001] {
+            assert!(proxy.is_pending_irrelevant(number(pending)));
+            assert!(proxy.is_satisfied(number(pending)));
+        }
+        assert!(!proxy.is_satisfied(number(1)));
+        assert_eq!(
+            proxy
+                .acknack_state()
+                .iter()
+                .map(SequenceNumber::value)
+                .collect::<Vec<_>>(),
+            vec![1],
+            "the one number the reader still lacks"
+        );
+
+        assert!(proxy.accept_data(number(1)));
+        assert_eq!(
+            proxy.acked_through(),
+            number(100_002),
+            "the hole closed, and the run and the sample above it went with it"
+        );
+        assert!(!proxy.is_pending_irrelevant(number(50_000)));
+        assert!(!proxy.is_pending(number(100_002)));
+    }
+
+    #[test]
+    fn a_run_of_any_length_is_taken_whole() {
+        // The contiguous part of a GAP has no length limit, and a GAP naming
+        // 2^62 numbers is valid. It must cost what a GAP naming three does.
+        let last = (1_i64 << 62) - 1;
+        let mut proxy = WriterProxy::new(writer_guid(), Vec::new(), true);
+        let added = proxy.accept_gap(&gap(1, last, &[]));
+        assert_eq!(added as u64, last as u64);
+        assert_eq!(proxy.acked_through(), number(last));
+
+        // Above a hole, too.
+        let mut proxy = WriterProxy::new(writer_guid(), Vec::new(), true);
+        proxy.accept_gap(&gap(2, last, &[]));
+        assert!(proxy.is_pending_irrelevant(number(last)));
+        proxy.accept_data(number(1));
+        assert_eq!(proxy.acked_through(), number(last));
+    }
+
+    #[test]
+    fn overlapping_gaps_merge_and_count_only_what_is_new() {
+        let mut proxy = WriterProxy::new(writer_guid(), Vec::new(), true);
+        // Nothing has arrived, so every run waits above the hole at 1.
+        assert_eq!(proxy.accept_gap(&gap(5, 10, &[])), 6);
+        assert_eq!(proxy.accept_gap(&gap(8, 15, &[])), 5, "11..=15 are new");
+        assert_eq!(
+            proxy.accept_gap(&gap(3, 3, &[16, 17, 20])),
+            4,
+            "3, 16, 17 and 20"
+        );
+        for (value, pending) in [
+            (2, false),
+            (3, true),
+            (4, false),
+            (5, true),
+            (15, true),
+            (16, true),
+            (17, true),
+            (18, false),
+            (19, false),
+            (20, true),
+            (21, false),
+        ] {
+            assert_eq!(
+                proxy.is_pending_irrelevant(number(value)),
+                pending,
+                "sequence number {value}"
+            );
+        }
+        assert_eq!(proxy.accept_gap(&gap(4, 4, &[])), 1, "4 joins 3 to 5..=17");
+        assert_eq!(proxy.accept_gap(&gap(6, 12, &[])), 0, "all named already");
+
+        proxy.accept_data(number(1));
+        proxy.accept_data(number(2));
+        assert_eq!(proxy.acked_through(), number(17));
+        proxy.accept_data(number(18));
+        proxy.accept_data(number(19));
+        assert_eq!(proxy.acked_through(), number(20));
+    }
+
+    #[test]
+    fn nothing_is_left_behind_the_watermark() {
+        // A sample that arrived and that a GAP then named is in both
+        // structures, and the watermark can pass it through either: here
+        // through the run, in one step, which never visits 5 on its own. It
+        // must be forgotten in both: left in either, it would count against
+        // MAX_TRACKED for as long as the writer lives.
+        let mut proxy = WriterProxy::new(writer_guid(), Vec::new(), true);
+        proxy.accept_data(number(5));
+        assert_eq!(proxy.accept_gap(&gap(3, 10, &[])), 8);
+        proxy.accept_data(number(1));
+        proxy.accept_data(number(2));
+        assert_eq!(proxy.acked_through(), number(10));
+        assert!(
+            !proxy.is_pending(number(5)),
+            "nothing at or below the watermark is still held as received"
+        );
+        assert!(!proxy.is_pending_irrelevant(number(5)), "nor as irrelevant");
+        assert_eq!(proxy.pending_count(), 0);
+    }
+
+    #[test]
+    fn a_heartbeat_that_moves_first_sn_forgets_the_runs_it_passes() {
+        let mut proxy = WriterProxy::new(writer_guid(), Vec::new(), true);
+        proxy.accept_gap(&gap(2, 3, &[]));
+        proxy.accept_gap(&gap(5, 10, &[]));
+        proxy.accept_gap(&gap(20, 30, &[]));
+        proxy.accept_data(number(25));
+        proxy.accept_heartbeat(&heartbeat(8, 40, 1));
+        assert_eq!(
+            proxy.acked_through(),
+            number(10),
+            "7 by the heartbeat, then through the rest of the run it landed in"
+        );
+        assert!(
+            !proxy.is_pending_irrelevant(number(2)),
+            "the run the heartbeat jumped over entirely is forgotten too"
+        );
+        assert!(!proxy.is_pending_irrelevant(number(9)));
+        assert!(proxy.is_pending_irrelevant(number(25)));
+        proxy.accept_heartbeat(&heartbeat(26, 40, 2));
+        assert_eq!(proxy.acked_through(), number(30));
+        assert!(!proxy.is_pending_irrelevant(number(30)));
+        assert!(
+            !proxy.is_pending(number(25)),
+            "a sample inside a run the watermark took whole is forgotten with it"
+        );
+    }
+
+    #[test]
+    fn a_flood_of_scattered_gaps_is_bounded_in_runs() {
+        // One run per GAP, none touching another, all above a hole at 1:
+        // the cap is on runs, and a GAP past it is refused, not half taken.
+        let mut proxy = WriterProxy::new(writer_guid(), Vec::new(), true);
+        let tracked = MAX_TRACKED as i64;
+        for index in 0..tracked {
+            let start = 3 + 2 * index;
+            assert_eq!(proxy.accept_gap(&gap(start, start, &[])), 1);
+        }
+        let beyond = 3 + 2 * tracked;
+        assert_eq!(proxy.accept_gap(&gap(beyond, beyond + 10, &[])), 0);
+        assert!(!proxy.is_pending_irrelevant(number(beyond)));
+        assert_eq!(
+            proxy.accept_gap(&gap(4, 4, &[])),
+            1,
+            "a run that merges two leaves fewer runs, and is taken"
+        );
+        assert!(proxy.is_pending_irrelevant(number(4)));
+    }
+
+    #[test]
+    fn a_resumed_count_carries_on_above_the_old_one_and_never_goes_back() {
+        let mut proxy = WriterProxy::new(writer_guid(), Vec::new(), true);
+        proxy.resume_acknack_count(41);
+        assert!(proxy.accept_heartbeat(&heartbeat(1, 1, 1)));
+        assert_eq!(proxy.take_acknack(reader_guid().entity_id).count, 42);
+        assert_eq!(proxy.acknack_count(), 42);
+        proxy.resume_acknack_count(7);
+        assert_eq!(proxy.next_acknack_count(), 43, "a count is never lowered");
     }
 
     #[test]

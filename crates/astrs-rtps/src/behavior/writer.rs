@@ -22,12 +22,61 @@
 //!
 //! 1. **Repairs first.** Anything a reader explicitly nacked goes before
 //!    anything new. A reader stuck on sample 3 is not helped by sample 40.
-//! 2. **Then new samples**, oldest first, for readers that are behind.
-//! 3. **Then GAPs**, for sequence numbers the history no longer holds — a
-//!    reader asking for an evicted or expired sample must be told it is
-//!    never coming, or it will ask forever.
-//! 4. **Then a HEARTBEAT**, when the cadence is due or a reader is behind.
-//!    Best-effort writers skip this step entirely.
+//! 2. **Then what the reader has never been served**, oldest first, from its
+//!    served frontier: the samples the history holds, and a `GAP` for the
+//!    numbers between them it does not — a reader waiting on an evicted,
+//!    expired or swept number must be told it is never coming, or it will
+//!    ask forever. The frontier then moves past both, so nothing is pushed
+//!    twice; what a reader lost on the way, it nacks.
+//! 3. **Then a prompt**, when a repair stopped short of what the reader had
+//!    already been served: one non-final `HEARTBEAT` to that reader alone, so
+//!    it names what else it lacks now rather than a heartbeat period later.
+//! 4. **Then the retirements every reader now has are swept** — see below.
+//! 5. **Then a HEARTBEAT**, when the cadence is due. Best-effort writers
+//!    skip this step and step 3 entirely.
+//!
+//! # Holes: one `GAP` per run, however long the run
+//!
+//! A history is not a contiguous range. `KEEP_LAST` evicts, `LIFESPAN`
+//! expires, and a retirement leaves with its instance's older changes, so a
+//! long-lived `TRANSIENT_LOCAL` writer holds a few changes scattered across
+//! everything it ever wrote: the SEDP writer of a node that has created and
+//! deleted endpoints for a week holds its live endpoints' announcements and
+//! a hundred thousand numbers of nothing between them. So the writer walks
+//! the numbers it *holds*, never the numbers between, and names each run of
+//! holes with one `GAP` whose contiguous part — `gapStart` through
+//! `gapList.bitmapBase - 1`, which §8.3.7.4 puts no length limit on — is the
+//! whole run. A late joiner is served such a history in one call, and
+//! [`MAX_SAMPLES_PER_PRODUCE`] bounds the samples, never the holes.
+//!
+//! Repairs follow the same rule. A reader that lost that `GAP` can only nack
+//! the first 256 numbers of the run — an `ACKNACK`'s bitmap is no wider —
+//! and is answered with the whole run, through the next change the history
+//! holds, rather than with 256 numbers per round trip.
+//!
+//! # Retirements: the one change that leaves once it is delivered
+//!
+//! [`RtpsWriter::dispose`] writes what deleting an entity writes on its
+//! builtin discovery topic: the instance is disposed *and* unregistered —
+//! gone, and never to be written again. Every other change leaves the
+//! history only when `KEEP_LAST` or `LIFESPAN` pushes it out, which for a
+//! retirement would be never: its instance is never written again, and
+//! entity keys are never reused. So a retirement is held only until every
+//! matched reader has it, then dropped with whatever older change of its
+//! instance is still held; a reader that matches afterwards is `GAP`ped past
+//! it, and learns — correctly — nothing about an entity that was gone before
+//! it arrived. The writer checks whenever the answer can change: when an
+//! `ACKNACK` moves a reader's watermark; in every
+//! [`produce`](RtpsWriter::produce), which is when a best-effort reader's
+//! copy goes out and which the cadence runs after a reader is unmatched; and
+//! before the next change is written or the next reader is matched.
+//!
+//! One kind of unmatched reader still counts: one whose participant's lease
+//! ran out here, which may be alive and still hold the entity. The builtin
+//! SEDP writers remember such a reader as *lapsed*, with what it had
+//! acknowledged, and hold every retirement since for it until it is matched
+//! again — the new proxy is replayed them — or until the participant says
+//! when to stop owing it.
 //!
 //! # Fragmentation
 //!
@@ -36,7 +85,7 @@
 //! fragment size are configuration, not constants, so a test can force
 //! fragmentation on a small payload and a real deployment can match its MTU.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration as StdDuration, Instant};
 
 use crate::behavior::cache::{CacheChange, ChangeKind, HistoryCache, InstanceHandle};
@@ -99,8 +148,18 @@ pub const MIN_PROTECTED_FRAGMENT_SIZE: u16 = 64;
 /// Most samples one `produce` call will put on the wire per reader.
 ///
 /// Bounds the work a single call does when a reader has been away for a long
-/// time; the rest goes out on the next call.
+/// time; the rest goes out on the next call. Holes do not count against it:
+/// a run of numbers the history no longer holds is one `GAP` whatever its
+/// length, so two held changes a hundred thousand numbers apart are served
+/// in one call.
 pub const MAX_SAMPLES_PER_PRODUCE: usize = 256;
+
+/// Most lapsed readers one writer remembers.
+///
+/// One per peer participant for a builtin SEDP writer, so the same bound the
+/// discovery database puts on participants. See
+/// [`RtpsWriter::lapse_participant`].
+const MAX_LAPSED_READERS: usize = crate::discovery::db::MAX_PARTICIPANTS;
 
 /// How a writer is configured.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,6 +320,38 @@ pub struct RtpsWriter {
     heartbeat_count: i32,
     matched: BTreeMap<Guid, ReaderProxy>,
     last_heartbeat_at: Option<Instant>,
+    /// The retirements [`dispose`](Self::dispose) wrote that the history
+    /// still holds.
+    ///
+    /// Beside the cache rather than in it, because a retirement says two
+    /// things a [`ChangeKind`] cannot say at once — disposed *and*
+    /// unregistered — and because it is the one change this writer drops
+    /// once every matched reader has it. See
+    /// [`sweep_retirements`](Self::sweep_retirements).
+    retired: BTreeSet<SequenceNumber>,
+    /// Readers whose participant's lease ran out while they were matched,
+    /// kept for the retirements they may still be owed. See
+    /// [`lapse_participant`](Self::lapse_participant).
+    lapsed: BTreeMap<Guid, Lapse>,
+}
+
+/// A reader this writer unmatched because its participant's lease ran out.
+///
+/// A lease that runs out here says nothing about the reader: its participant
+/// may be alive and still hold every endpoint this one announced, having
+/// heard from this participant all along. What such a reader is still owed
+/// is the retirement of every endpoint deleted since — and a retirement is
+/// swept as soon as every *matched* reader has it, which with the reader
+/// unmatched could be at once. The record holds those retirements back until
+/// the reader is matched again, which replays them, or until the record
+/// expires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Lapse {
+    /// What the reader had acknowledged when it lapsed; every retirement
+    /// above it is held for the reader.
+    acked_through: SequenceNumber,
+    /// When the record is dropped if the reader has not been matched again.
+    until: Instant,
 }
 
 impl RtpsWriter {
@@ -277,6 +368,8 @@ impl RtpsWriter {
             heartbeat_count: 0,
             matched: BTreeMap::new(),
             last_heartbeat_at: None,
+            retired: BTreeSet::new(),
+            lapsed: BTreeMap::new(),
         }
     }
 
@@ -292,11 +385,37 @@ impl RtpsWriter {
         &self.config.topic
     }
 
-    /// Write a disposal: the octets that say an instance is gone.
+    /// Retire an instance: write the change that says an entity is gone.
     ///
-    /// The key is what identifies the instance — for a builtin discovery
-    /// topic, the departing entity's GUID — wrapped in a `CDR_LE`
-    /// encapsulation header so a receiver can find it at a fixed offset.
+    /// What deleting an entity writes on its builtin discovery topic — the
+    /// departing participant's GUID on SPDP, the deleted endpoint's on SEDP.
+    /// The key is that GUID, wrapped in a `CDR_LE` encapsulation header so a
+    /// receiver can find it at a fixed offset. The change is filed under the
+    /// GUID's own instance (a GUID is its own key hash, §9.6.3.8), so under
+    /// `KEEP_LAST` it replaces that instance's announcement and leaves every
+    /// other instance's alone.
+    ///
+    /// # Disposed *and* unregistered
+    ///
+    /// The `DATA` carries `PID_STATUS_INFO` with both flags set (§9.6.3.9),
+    /// which is what DDS sends for a deleted entity: the instance is
+    /// disposed, and this writer will never write it again. The history files
+    /// the change as [`ChangeKind::NotAliveDisposed`], the kind a receiver
+    /// reads either form back as, and the writer remembers the
+    /// unregistration beside it.
+    ///
+    /// The unregistration is what bounds the history. A disposal alone is
+    /// state a `TRANSIENT_LOCAL` writer owes every late joiner, and one kept
+    /// for every entity ever deleted would grow for the whole life of the
+    /// participant: entity keys are never reused, so nothing would ever
+    /// replace it. An unregistered instance is owed to nobody who arrives
+    /// later — its announcement is already gone, so a late joiner told
+    /// nothing about it knows exactly what it should. The change is therefore
+    /// held only until every matched reader has it — acknowledged by a
+    /// reliable one, sent to a best-effort one — and every lapsed one too
+    /// (see the module docs), and then dropped, together with any older
+    /// change still held for the instance. A reader matched after that is
+    /// `GAP`ped past it.
     ///
     /// # Errors
     ///
@@ -307,13 +426,15 @@ impl RtpsWriter {
             &astrs_cdr::EncapsulationHeader::new(astrs_cdr::EncapsulationKind::CdrLe).to_bytes(),
         );
         payload.extend_from_slice(&key.to_bytes());
-        self.write_change(
+        let number = self.write_change(
             payload,
             None,
             ChangeKind::NotAliveDisposed,
-            InstanceHandle::NIL,
+            crate::discovery::sedp::guid_instance(key),
             now,
-        )
+        )?;
+        self.retired.insert(number);
+        Ok(number)
     }
 
     /// The QoS it offers.
@@ -396,6 +517,20 @@ impl RtpsWriter {
     /// The two are genuinely different questions. A `TRANSIENT_LOCAL` writer
     /// with one `VOLATILE` reader still keeps its history, because the next
     /// reader to appear may want it.
+    ///
+    /// # A reader that lapsed
+    ///
+    /// Matching a reader recorded as lapsed — unmatched because its
+    /// participant's lease ran out — ends the record: the new proxy starts like any late
+    /// joiner's, and the retirements the record held back are replayed to
+    /// it with the rest of the history. That is how a peer this writer's
+    /// participant had given up on, but which never gave up on it, learns
+    /// which endpoints were deleted while it was away.
+    ///
+    /// A reader that is still matched is left alone, whatever it may have
+    /// forgotten: a repeated SPDP or SEDP announcement says nothing about
+    /// that. What does is the reader's own next `ACKNACK` — see
+    /// [`ReaderProxy::accept_acknack`].
     pub fn match_reader(&mut self, proxy: ReaderProxy) {
         let guid = proxy.guid();
         match self.matched.get_mut(&guid) {
@@ -403,6 +538,11 @@ impl RtpsWriter {
                 existing.set_locators(proxy.locators(), Vec::new());
             }
             None => {
+                // Before the newcomer counts: a retirement every reader
+                // already matched has is swept first, so a late joiner is
+                // never replayed the end of an entity that was gone before it
+                // arrived. See `sweep_retirements`.
+                self.sweep_retirements();
                 let mut proxy = proxy;
                 if !self.replays_history_to(&proxy) {
                     // VOLATILE on either side: the late joiner starts where
@@ -411,6 +551,10 @@ impl RtpsWriter {
                     proxy.skip_history_through(self.last_change);
                 }
                 self.matched.insert(guid, proxy);
+                // A reader that lapsed is back. Its new proxy is replayed
+                // the history, the retirements held for it included, and
+                // holds them itself from now on.
+                self.lapsed.remove(&guid);
             }
         }
     }
@@ -424,11 +568,22 @@ impl RtpsWriter {
     }
 
     /// Remove a matched reader.
+    ///
+    /// The reader is gone for good, so a record of it having lapsed goes
+    /// too.
     pub fn unmatch_reader(&mut self, guid: Guid) -> bool {
+        if self.lapsed.remove(&guid).is_some() {
+            self.sweep_retirements();
+        }
         self.matched.remove(&guid).is_some()
     }
 
     /// Remove every matched reader belonging to one participant.
+    ///
+    /// Leaves any record of the participant's readers having lapsed alone:
+    /// when the participant's lease runs out, its readers of the builtin
+    /// SEDP writers are recorded as lapsed first, and the rest of it is then
+    /// unwired through here.
     pub fn unmatch_participant(&mut self, participant: Guid) -> usize {
         let doomed: Vec<Guid> = self
             .matched
@@ -440,6 +595,92 @@ impl RtpsWriter {
             self.matched.remove(guid);
         }
         doomed.len()
+    }
+
+    /// Unmatch every reader of `participant`, whose lease ran out, and
+    /// remember each as lapsed until `until`.
+    ///
+    /// [`unmatch_participant`](Self::unmatch_participant), except that each
+    /// active reader's acknowledged watermark is kept in a [`Lapse`] record,
+    /// and every retirement above it is held — owed to the reader, which may
+    /// be alive and still hold the endpoint the retirement ends — until the
+    /// reader is matched again, which replays it, or until `until`. At most
+    /// [`MAX_LAPSED_READERS`] are remembered; beyond that, of the records
+    /// already held, the one that would expire soonest makes room.
+    ///
+    /// Only the participant decides what `until` is, and only for the
+    /// builtin writers whose retirements say an endpoint is gone. Returns
+    /// how many readers were unmatched.
+    pub(crate) fn lapse_participant(&mut self, participant: Guid, until: Instant) -> usize {
+        let lapsing: Vec<Guid> = self
+            .matched
+            .keys()
+            .filter(|guid| guid.prefix == participant.prefix)
+            .copied()
+            .collect();
+        for guid in &lapsing {
+            let Some(proxy) = self.matched.remove(guid) else {
+                continue;
+            };
+            if !proxy.is_active() {
+                // Owed nothing while it was matched either: see
+                // `settled_through`.
+                continue;
+            }
+            if !self.lapsed.contains_key(guid) && self.lapsed.len() >= MAX_LAPSED_READERS {
+                let soonest = self
+                    .lapsed
+                    .iter()
+                    .min_by_key(|(_, lapse)| lapse.until)
+                    .map(|(held, _)| *held);
+                if let Some(soonest) = soonest {
+                    self.lapsed.remove(&soonest);
+                }
+            }
+            self.lapsed.insert(
+                *guid,
+                Lapse {
+                    acked_through: proxy.acked_through(),
+                    until,
+                },
+            );
+        }
+        if !lapsing.is_empty() {
+            // A record dropped to make room may have been the last thing
+            // holding a retirement.
+            self.sweep_retirements();
+        }
+        lapsing.len()
+    }
+
+    /// Forget every lapsed reader of `participant`, and sweep what only they
+    /// held.
+    ///
+    /// For a participant that announced its departure: it is gone, and owed
+    /// nothing. Returns how many records went.
+    pub(crate) fn forget_lapsed_participant(&mut self, participant: Guid) -> usize {
+        let before = self.lapsed.len();
+        self.lapsed
+            .retain(|guid, _| guid.prefix != participant.prefix);
+        self.forgot_lapses(before)
+    }
+
+    /// Forget every lapsed reader whose record expires at or before `now`,
+    /// and sweep what only they held. Returns how many records went.
+    pub(crate) fn forget_lapses_due(&mut self, now: Instant) -> usize {
+        let before = self.lapsed.len();
+        self.lapsed.retain(|_, lapse| lapse.until > now);
+        self.forgot_lapses(before)
+    }
+
+    /// How many lapse records went since there were `before`, sweeping when
+    /// any did.
+    fn forgot_lapses(&mut self, before: usize) -> usize {
+        let forgotten = before.saturating_sub(self.lapsed.len());
+        if forgotten > 0 {
+            self.sweep_retirements();
+        }
+        forgotten
     }
 
     /// Write a sample and return the sequence number it was given.
@@ -488,6 +729,11 @@ impl RtpsWriter {
                 limit: crate::behavior::fragment::MAX_REASSEMBLY_SAMPLE as usize,
             });
         }
+        // Before the new change, never after it. A retirement every matched
+        // reader already has goes now; the one `dispose` is about to write
+        // must survive until it has been sent, because the SPDP departure
+        // announces it straight out of the history.
+        self.sweep_retirements();
         let sequence_number = self.last_change.next();
         let change = CacheChange::at(sequence_number, payload, now)
             .with_kind(kind)
@@ -496,7 +742,10 @@ impl RtpsWriter {
             Some(timestamp) => change.with_source_timestamp(timestamp),
             None => change,
         };
-        let _evicted = self.cache.insert(change)?;
+        let evicted = self.cache.insert(change)?;
+        for removal in evicted {
+            self.retired.remove(&removal.sequence_number());
+        }
         self.last_change = sequence_number;
         Ok(sequence_number)
     }
@@ -507,6 +756,7 @@ impl RtpsWriter {
     /// create a hole the writer must `GAP` rather than resend. Returns
     /// whether the sample was there.
     pub fn forget(&mut self, sequence_number: SequenceNumber) -> bool {
+        self.retired.remove(&sequence_number);
         self.cache.remove(sequence_number).is_some()
     }
 
@@ -515,11 +765,16 @@ impl RtpsWriter {
     /// Returns the sequence numbers that expired, which the next
     /// [`produce`](Self::produce) will `GAP`.
     pub fn expire(&mut self, now: Instant) -> Vec<SequenceNumber> {
-        self.cache
+        let expired: Vec<SequenceNumber> = self
+            .cache
             .expire(now)
             .iter()
             .map(|removal| removal.sequence_number())
-            .collect()
+            .collect();
+        for number in &expired {
+            self.retired.remove(number);
+        }
+        expired
     }
 
     /// Drop history every matched reader has acknowledged.
@@ -539,6 +794,13 @@ impl RtpsWriter {
     ///   a writer that wants a bound states one, in the depth or in the
     ///   limits.
     ///
+    /// The one change that promise does not cover is a retirement, which
+    /// [`dispose`](Self::dispose) writes: it ends its instance, and a reader
+    /// that has not appeared yet is owed nothing about an instance that was
+    /// gone before it arrived. The writer drops those itself, under every
+    /// history and durability, as soon as every matched reader has them;
+    /// this method neither waits for nor counts them.
+    ///
     /// Returns how many samples were dropped, which is zero in both excluded
     /// cases.
     pub fn reclaim(&mut self) -> usize {
@@ -548,6 +810,7 @@ impl RtpsWriter {
         let Some(watermark) = self.acked_by_all() else {
             return 0;
         };
+        self.retired.retain(|number| *number > watermark);
         self.cache.drop_through(watermark)
     }
 
@@ -572,13 +835,89 @@ impl RtpsWriter {
             .all(|proxy| proxy.acked_through() >= self.last_change)
     }
 
+    /// The highest sequence number every active matched reader, and every
+    /// lapsed one, is finished with, or `None` when there is neither.
+    ///
+    /// Wider than [`acked_by_all`](Self::acked_by_all), which counts the
+    /// reliable readers only. A best-effort reader never acknowledges, but it
+    /// is still owed one copy of a retirement, and its watermark moves only
+    /// once [`produce`](Self::produce) has put that copy on the wire. A
+    /// lapsed reader counts with what it had acknowledged when it lapsed: it
+    /// is owed every retirement since (see [`Lapse`]).
+    fn settled_through(&self) -> Option<SequenceNumber> {
+        let matched = self
+            .matched
+            .values()
+            .filter(|proxy| proxy.is_active())
+            .map(ReaderProxy::acked_through);
+        let lapsed = self.lapsed.values().map(|lapse| lapse.acked_through);
+        matched.chain(lapsed).min()
+    }
+
+    /// Drop every retirement each matched reader already has, together with
+    /// any older change of its instance the history still holds.
+    ///
+    /// "Has" is [`settled_through`](Self::settled_through): acknowledged by a
+    /// reliable reader, sent to a best-effort one, and acknowledged before it
+    /// lapsed by a lapsed one. With no reader matched and none lapsed, nobody
+    /// is owed anything and every retirement goes. A retirement some matched
+    /// or lapsed reader is still missing stays, whatever else happens:
+    /// dropping it would `GAP` that reader past the one change that says the
+    /// entity is gone, and the reader would keep the entity for as long as
+    /// this participant lives.
+    ///
+    /// The older changes go too because a `KEEP_LAST` depth above one keeps
+    /// an instance's last announcements beside its retirement, and they are
+    /// owed to nobody either. Each is below the retirement, so below the
+    /// watermark: every reader matched now already has it.
+    ///
+    /// Returns how many changes were dropped.
+    fn sweep_retirements(&mut self) -> usize {
+        let Some(&oldest) = self.retired.first() else {
+            return 0;
+        };
+        let watermark = self.settled_through();
+        if watermark.is_some_and(|through| oldest > through) {
+            return 0;
+        }
+        // The newest settled retirement of each instance. The set pops in
+        // ascending order, so the last one filed for an instance is it.
+        let mut settled: BTreeMap<InstanceHandle, SequenceNumber> = BTreeMap::new();
+        while let Some(&number) = self.retired.first() {
+            if watermark.is_some_and(|through| number > through) {
+                break;
+            }
+            self.retired.pop_first();
+            if let Some(change) = self.cache.get(number) {
+                settled.insert(change.instance, number);
+            }
+        }
+        if settled.is_empty() {
+            return 0;
+        }
+        let doomed: Vec<SequenceNumber> = self
+            .cache
+            .iter()
+            .filter(|change| {
+                settled
+                    .get(&change.instance)
+                    .is_some_and(|through| change.sequence_number <= *through)
+            })
+            .map(|change| change.sequence_number)
+            .collect();
+        for number in &doomed {
+            self.cache.remove(*number);
+        }
+        doomed.len()
+    }
+
     /// Apply an `ACKNACK` from a matched reader.
     ///
     /// Returns `true` when the submessage was fresh and applied. The repairs
     /// it asks for go out on the next [`produce`](Self::produce).
     pub fn on_acknack(&mut self, reader: Guid, acknack: &crate::messages::AckNack) -> bool {
         let first_available = self.first_available();
-        match self.matched.get_mut(&reader) {
+        let applied = match self.matched.get_mut(&reader) {
             None => false,
             Some(proxy) => {
                 let applied = proxy.accept_acknack(acknack);
@@ -587,7 +926,12 @@ impl RtpsWriter {
                 }
                 applied
             }
+        };
+        if applied {
+            // The watermark this reader just moved may be the lowest one.
+            self.sweep_retirements();
         }
+        applied
     }
 
     /// Apply a `NACK_FRAG` from a matched reader.
@@ -621,6 +965,10 @@ impl RtpsWriter {
         for reader in reader_guids {
             outbound.extend(self.produce_for(reader, now)?);
         }
+        // After the readers, because a best-effort reader's watermark moves
+        // only once its copy is on the wire; before the heartbeat, so the
+        // window it announces is the history as it now stands.
+        self.sweep_retirements();
         if self.should_heartbeat(now) {
             outbound.extend(self.produce_heartbeat(now, false)?);
         }
@@ -693,7 +1041,8 @@ impl RtpsWriter {
         }
     }
 
-    /// Everything for one reader.
+    /// Everything for one reader: [`plan_service`](Self::plan_service)'s
+    /// plan, on the wire.
     fn produce_for(&mut self, reader: Guid, now: Instant) -> BehaviorResult<Vec<Outbound>> {
         let Some(proxy) = self.matched.get(&reader) else {
             return Ok(Vec::new());
@@ -709,57 +1058,142 @@ impl RtpsWriter {
         let reader_prefix = proxy.guid().prefix;
         let reliable = proxy.is_reliable();
 
-        // Repairs first, then anything the reader has not been sent. A
-        // sample at or below the reader's acknowledged watermark is never
-        // sent again, whatever `highest_sent` says: an ACKNACK that
+        // A sample at or below the reader's acknowledged watermark is never
+        // sent again, whatever the frontier says: an ACKNACK that
         // acknowledges through 2 proves the reader has 1 and 2, even if this
         // writer never sent them (a second writer, or a replay, may have).
-        let floor = proxy.highest_sent().max(proxy.acked_through());
-        let mut wanted: Vec<SequenceNumber> = proxy
+        let acked = proxy.acked_through();
+        let floor = proxy.highest_sent().max(acked);
+        let repairs: Vec<SequenceNumber> = proxy
             .requested()
-            .filter(|number| *number > proxy.acked_through())
+            .filter(|number| *number > acked)
+            .take(MAX_SAMPLES_PER_PRODUCE)
             .collect();
-        let start = floor.next();
-        let mut number = start;
-        while number <= self.last_change && wanted.len() < MAX_SAMPLES_PER_PRODUCE {
-            wanted.push(number);
-            number = number.next();
-        }
-        wanted.sort_unstable();
-        wanted.dedup();
+        let service = self.plan_service(floor, &repairs);
 
-        let mut missing = Vec::new();
-        let mut sendable = Vec::new();
-        for number in wanted.into_iter().take(MAX_SAMPLES_PER_PRODUCE) {
-            if self.cache.contains(number) {
-                sendable.push(number);
-            } else if number <= self.last_change {
-                missing.push(number);
+        let mut outbound =
+            self.datagrams_for(&service.samples, reader_id, reader_prefix, &locators)?;
+        if reliable {
+            // A best-effort reader is never sent a GAP, nor prompted: it
+            // cannot ask for anything, so there is nothing to answer.
+            outbound.extend(self.gap_datagrams(
+                &service.holes,
+                reader_id,
+                reader_prefix,
+                &locators,
+            )?);
+            if service
+                .repaired_through
+                .is_some_and(|through| through < floor)
+            {
+                // The repair stopped short of what this reader had already
+                // been served, and what lies between may have been lost with
+                // it: the reader could not ask, because an ACKNACK's bitmap
+                // reaches no further than 256 numbers past its base. Ask it
+                // now, rather than a heartbeat period from now — a late
+                // joiner whose first replay went nowhere is repaired at the
+                // pace of round trips.
+                outbound.push(self.heartbeat_to(reader_id, reader_prefix, &locators)?);
             }
-        }
-
-        let mut outbound = Vec::new();
-        outbound.extend(self.datagrams_for(&sendable, reader_id, reader_prefix, &locators)?);
-        if reliable && !missing.is_empty() {
-            outbound.push(self.gap_for(&missing, reader_id, reader_prefix, &locators)?);
         }
 
         if let Some(proxy) = self.matched.get_mut(&reader) {
-            for number in &sendable {
-                proxy.record_sent(*number);
-            }
-            for number in &missing {
+            for number in &service.samples {
                 proxy.forget_requested(*number);
             }
+            for (first, last) in &service.holes {
+                proxy.forget_requested_within(*first, *last);
+            }
+            proxy.serve_through(service.served_through);
             if !reliable {
-                // Nobody will ever acknowledge, so the watermark is whatever
-                // has been sent. Without this a KEEP_ALL best-effort writer
-                // would never release a sample.
+                // Nobody will ever acknowledge, so the watermark is the
+                // frontier: everything below it went out once, as a sample
+                // or as a hole a best-effort reader is simply not told
+                // about. Without this a KEEP_ALL best-effort writer would
+                // never release a sample, and a best-effort late joiner
+                // would hold back every retirement the writer is waiting to
+                // sweep.
                 proxy.assume_acked_through(proxy.highest_sent());
             }
         }
         let _ = now;
         Ok(outbound)
+    }
+
+    /// Decide what one `produce` serves a reader whose frontier is `floor`
+    /// and who asked for `repairs` again.
+    ///
+    /// **Repairs** first. A held one goes again. One the history no longer
+    /// holds is answered with the whole run of holes it starts, through the
+    /// change after it or [`last_change`](Self::last_change): the reader
+    /// asking for the start of a run lost the `GAP` for all of it, and an
+    /// answer as narrow as its bitmap would cost it one round trip per 256
+    /// numbers. A number above `last_change` has not been written, and is
+    /// never `GAP`ped.
+    ///
+    /// **Then everything above `floor`**: the held changes, oldest first,
+    /// while the [`MAX_SAMPLES_PER_PRODUCE`] budget lasts, each preceded by
+    /// the run of holes before it; and, once the history has nothing held
+    /// above the last change taken, the run from there through
+    /// `last_change`.
+    ///
+    /// The frontier moves to the last number that walk covered and no
+    /// further. A repair above it is sent but does not move it, or the
+    /// numbers between the two would never be pushed at all.
+    fn plan_service(&self, floor: SequenceNumber, repairs: &[SequenceNumber]) -> Service {
+        let mut samples: BTreeSet<SequenceNumber> = BTreeSet::new();
+        let mut holes: Vec<(SequenceNumber, SequenceNumber)> = Vec::new();
+        let mut repaired_through: Option<SequenceNumber> = None;
+        for &number in repairs {
+            if number > self.last_change {
+                continue;
+            }
+            let named = if self.cache.contains(number) {
+                samples.insert(number);
+                number
+            } else {
+                let last = self.end_of_hole(number);
+                holes.push((number, last));
+                last
+            };
+            repaired_through = Some(repaired_through.map_or(named, |through| through.max(named)));
+        }
+
+        let mut served_through = floor;
+        let mut held = self.cache.held_after(floor).peekable();
+        while let Some(&number) = held.peek() {
+            if samples.len() >= MAX_SAMPLES_PER_PRODUCE && !samples.contains(&number) {
+                break;
+            }
+            if number > served_through.next() {
+                holes.push((served_through.next(), number.previous()));
+            }
+            samples.insert(number);
+            served_through = number;
+            held.next();
+        }
+        if held.peek().is_none() && served_through < self.last_change {
+            holes.push((served_through.next(), self.last_change));
+            served_through = self.last_change;
+        }
+
+        Service {
+            samples: samples.into_iter().collect(),
+            holes: merge_runs(holes),
+            served_through,
+            repaired_through,
+        }
+    }
+
+    /// The last number of the run of holes that `number` — which the history
+    /// no longer holds — belongs to: one below the next change the history
+    /// holds, or [`last_change`](Self::last_change) when it holds none after
+    /// it.
+    fn end_of_hole(&self, number: SequenceNumber) -> SequenceNumber {
+        self.cache
+            .next_held_after(number)
+            .map_or(self.last_change, SequenceNumber::previous)
+            .min(self.last_change)
     }
 
     /// Pack the given samples into datagrams for one reader.
@@ -868,45 +1302,62 @@ impl RtpsWriter {
         Ok(outbound)
     }
 
-    /// The `GAP` that tells a reader the listed numbers are never coming.
+    /// The `GAP`s that tell a reader `holes` are never coming, packed into
+    /// as few datagrams as the budget allows.
     ///
-    /// The set must name **exactly** the numbers that are gone. A `GAP` is
-    /// binding: every number it covers is irrelevant from that moment on, and
-    /// a reader will never ask for one again. Widening a scattered list into
-    /// one contiguous run — the obvious simplification — would declare the
-    /// samples *between* the holes irrelevant too, and on a reliable channel
-    /// that is silent data loss.
-    ///
-    /// §8.3.7.4 gives exactly the shape needed: the irrelevant set is
-    /// `[gapStart, gapList.bitmapBase)` together with the bits set in
-    /// `gapList`. So `gapStart` is the first missing number, `gapList` is
-    /// based one past it, and the rest of the list is bits.
-    ///
-    /// Numbers more than [`MAX_SET_BITS`](crate::structure::MAX_SET_BITS)
-    /// past the base do not fit the bitmap and are left for the next
-    /// `produce`: once this GAP lands the reader's watermark moves, its next
-    /// ACKNACK names a higher base, and the remainder is covered then.
-    fn gap_for(
+    /// [`gaps_naming`] decides what each `GAP` says; this only puts them on
+    /// the wire.
+    fn gap_datagrams(
         &self,
-        numbers: &[SequenceNumber],
+        holes: &[(SequenceNumber, SequenceNumber)],
+        reader_id: EntityId,
+        reader_prefix: crate::structure::GuidPrefix,
+        locators: &[Locator],
+    ) -> BehaviorResult<Vec<Outbound>> {
+        let mut outbound = Vec::new();
+        if holes.is_empty() {
+            return Ok(outbound);
+        }
+        let mut builder = self.new_builder(reader_prefix);
+        for gap in gaps_naming(holes, reader_id, self.config.guid.entity_id)? {
+            gap.validate()?;
+            let gap = Submessage::from(gap);
+            if !builder.fits(&gap)
+                && let Some(message) = Self::flush(&mut builder, self.header(), reader_prefix)
+            {
+                outbound.push(Outbound::new(locators.to_vec(), message.encode()?));
+            }
+            builder.push(gap);
+        }
+        if let Some(message) = Self::flush(&mut builder, self.header(), reader_prefix) {
+            outbound.push(Outbound::new(locators.to_vec(), message.encode()?));
+        }
+        Ok(outbound)
+    }
+
+    /// A non-final `HEARTBEAT` to one reader, outside the cadence.
+    ///
+    /// The prompt [`produce_for`](Self::produce_for) sends after a repair
+    /// that stopped short of what the reader had already been served. It
+    /// spends a `Count_t` like any other heartbeat and leaves the cadence
+    /// alone: every other reader is still owed its heartbeat on time.
+    fn heartbeat_to(
+        &mut self,
         reader_id: EntityId,
         reader_prefix: crate::structure::GuidPrefix,
         locators: &[Locator],
     ) -> BehaviorResult<Outbound> {
-        let start = numbers.first().copied().unwrap_or(SequenceNumber::FIRST);
-        let base = start.next();
-        let mut gap_list = SequenceNumberSet::new(base);
-        for number in numbers.iter().skip(1) {
-            if number.value().saturating_sub(base.value()) >= i64::from(MAX_SET_BITS) {
-                break;
-            }
-            gap_list.insert(*number)?;
-        }
-        let gap = Gap::new(reader_id, self.config.guid.entity_id, start, gap_list);
-        gap.validate()?;
+        self.heartbeat_count = self.heartbeat_count.saturating_add(1);
+        let heartbeat = Heartbeat::new(
+            reader_id,
+            self.config.guid.entity_id,
+            self.first_available(),
+            self.last_change,
+            self.heartbeat_count,
+        );
         let mut message = Message::new(self.header());
         message.push(InfoDestination::new(reader_prefix));
-        message.push(gap);
+        message.push(heartbeat);
         Ok(Outbound::new(locators.to_vec(), message.encode()?))
     }
 
@@ -924,8 +1375,11 @@ impl RtpsWriter {
 
         let first = self.first_available();
         let last = self.last_change;
+        let header = self.header();
+        let writer_id = self.config.guid.entity_id;
+        let count = self.heartbeat_count;
         let mut outbound = Vec::new();
-        for proxy in self.matched.values() {
+        for proxy in self.matched.values_mut() {
             if !proxy.is_reliable() || !proxy.is_active() {
                 continue;
             }
@@ -933,19 +1387,19 @@ impl RtpsWriter {
             if locators.is_empty() {
                 continue;
             }
-            let mut heartbeat = Heartbeat::new(
-                proxy.guid().entity_id,
-                self.config.guid.entity_id,
-                first,
-                last,
-                self.heartbeat_count,
-            );
+            let mut heartbeat =
+                Heartbeat::new(proxy.guid().entity_id, writer_id, first, last, count);
             if liveliness {
                 heartbeat = heartbeat.asserting_liveliness().finalized();
-            } else if proxy.acked_through() >= last {
-                heartbeat = heartbeat.finalized();
+            } else {
+                if proxy.acked_through() >= last {
+                    heartbeat = heartbeat.finalized();
+                }
+                // The periodic heartbeat is the writer's clock for how long
+                // a reader has been silent. See `ReaderProxy::accept_acknack`.
+                proxy.note_heartbeat();
             }
-            let mut message = Message::new(self.header());
+            let mut message = Message::new(header);
             message.push(InfoDestination::new(proxy.guid().prefix));
             message.push(heartbeat);
             outbound.push(Outbound::new(locators, message.encode()?));
@@ -958,9 +1412,10 @@ impl RtpsWriter {
     /// A change that is not `Alive` goes out as a **key**, not a sample: the
     /// `K` flag says "these octets identify the instance, they are not its
     /// value", and `PID_STATUS_INFO` in the inline QoS says whether the
-    /// instance was disposed of or merely unregistered (§9.6.3.9). Both are
-    /// needed — the flag alone cannot tell the two apart, and a receiver that
-    /// reads only the flag would treat an unregistration as a disposal.
+    /// instance was disposed of, merely unregistered, or both (§9.6.3.9).
+    /// Both are needed — the flag alone cannot tell them apart, and a
+    /// receiver that reads only the flag would treat an unregistration as a
+    /// disposal.
     fn data_for<'a>(&self, change: &'a CacheChange, reader_id: EntityId) -> Data<'a> {
         let payload = if change.kind.carries_data() {
             DataPayload::Data(SerializedPayload::new(change.payload.as_slice()))
@@ -978,9 +1433,27 @@ impl RtpsWriter {
         if change.kind.carries_data() {
             return data;
         }
-        match status_info_qos(change.kind) {
+        match status_info_qos(self.status_info(change)) {
             None => data,
             Some(list) => data.with_inline_qos(list),
+        }
+    }
+
+    /// The `PID_STATUS_INFO` octets a change that is not `Alive` goes out
+    /// with.
+    ///
+    /// Its kind's flags, plus the unregistered flag when the change is a
+    /// retirement: [`dispose`](Self::dispose) disposes of an instance *and*
+    /// unregisters it, and a [`ChangeKind`] can say only the first. A
+    /// receiver that reads the octets back with
+    /// [`ChangeKind::from_status_info`] sees a disposal either way.
+    fn status_info(&self, change: &CacheChange) -> [u8; 4] {
+        let [first, second, third, flags] = change.kind.status_info();
+        if self.retired.contains(&change.sequence_number) {
+            let [.., unregistered] = ChangeKind::NotAliveUnregistered.status_info();
+            [first, second, third, flags | unregistered]
+        } else {
+            [first, second, third, flags]
         }
     }
 
@@ -1022,19 +1495,116 @@ impl RtpsWriter {
     }
 }
 
+/// What one `produce` serves one reader: the plan
+/// [`RtpsWriter::plan_service`] makes and [`RtpsWriter::produce_for`]
+/// carries out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Service {
+    /// The held changes to send, ascending.
+    samples: Vec<SequenceNumber>,
+    /// The runs of numbers the history no longer holds, each `(first, last)`
+    /// inclusive: ascending, disjoint and never adjacent.
+    holes: Vec<(SequenceNumber, SequenceNumber)>,
+    /// The reader's served frontier once this is on the wire.
+    served_through: SequenceNumber,
+    /// The highest number the answer to the reader's repair requests names,
+    /// when it asked for any this writer could answer.
+    repaired_through: Option<SequenceNumber>,
+}
+
+/// `runs` sorted, with every two that overlap or touch merged into one.
+fn merge_runs(
+    mut runs: Vec<(SequenceNumber, SequenceNumber)>,
+) -> Vec<(SequenceNumber, SequenceNumber)> {
+    runs.sort_unstable();
+    let mut merged: Vec<(SequenceNumber, SequenceNumber)> = Vec::with_capacity(runs.len());
+    for (first, last) in runs {
+        match merged.last_mut() {
+            Some((_, merged_last)) if first <= merged_last.next() => {
+                if last > *merged_last {
+                    *merged_last = last;
+                }
+            }
+            _ => merged.push((first, last)),
+        }
+    }
+    merged
+}
+
+/// The `GAP`s that name exactly `holes`: every number in them, and no other.
+///
+/// Exactly, because a `GAP` is binding. Every number it covers is irrelevant
+/// from that moment on and the reader never asks for it again, so a `GAP`
+/// that covered a held change — widening scattered holes into one run is the
+/// obvious simplification that does it — would be silent data loss on a
+/// reliable channel.
+///
+/// `holes` is ascending, disjoint and never adjacent, each `(first, last)`
+/// inclusive. A `GAP` names two sets (§8.3.7.4): the run `gapStart` through
+/// `gapList.bitmapBase - 1`, of any length, and the bits of a bitmap at most
+/// [`MAX_SET_BITS`] wide after it. Each `GAP` here spends its run on one hole
+/// — the base is that hole's end plus one, which the history holds or has
+/// not written, so the run never reaches a held change — and its bitmap on
+/// the holes that start within its reach. A hole the bitmap cannot finish is
+/// where the next `GAP` starts, and that one's run takes the rest.
+///
+/// # Errors
+///
+/// [`BehaviorError::Wire`] if a bit fell outside its bitmap, which the
+/// construction rules out.
+fn gaps_naming(
+    holes: &[(SequenceNumber, SequenceNumber)],
+    reader_id: EntityId,
+    writer_id: EntityId,
+) -> BehaviorResult<Vec<Gap>> {
+    let reach = i64::from(MAX_SET_BITS).saturating_sub(1);
+    let mut gaps = Vec::new();
+    let mut index = 0_usize;
+    let mut resume: Option<SequenceNumber> = None;
+    while let Some(&(first, last)) = holes.get(index) {
+        let start = resume.take().unwrap_or(first);
+        let base = last.next();
+        let window_last = base.saturating_add(reach);
+        let mut gap_list = SequenceNumberSet::new(base);
+        index = index.saturating_add(1);
+        while let Some(&(next_first, next_last)) = holes.get(index) {
+            if next_first > window_last {
+                break;
+            }
+            // `next_first > base`, because holes never touch, and `stop` is
+            // at most `window_last`: every bit lands inside the bitmap, and
+            // the loop ends even at `SequenceNumber::MAX`, where `next`
+            // saturates.
+            let stop = next_last.min(window_last);
+            let mut number = next_first;
+            loop {
+                gap_list.insert(number)?;
+                if number >= stop {
+                    break;
+                }
+                number = number.next();
+            }
+            if next_last > window_last {
+                resume = Some(window_last.next());
+                break;
+            }
+            index = index.saturating_add(1);
+        }
+        gaps.push(Gap::new(reader_id, writer_id, start, gap_list));
+    }
+    Ok(gaps)
+}
+
 /// The inline QoS a disposal or unregistration carries.
 ///
-/// One parameter: `PID_STATUS_INFO`, four octets, the last of which holds the
-/// disposed and unregistered bits. `None` for a live sample, which needs no
-/// status at all.
-fn status_info_qos(kind: ChangeKind) -> Option<ParameterList<'static>> {
-    if kind.carries_data() {
-        return None;
-    }
+/// One parameter: `PID_STATUS_INFO`, the four octets given, the last of which
+/// holds the disposed and unregistered bits. A live sample needs no status at
+/// all, and `RtpsWriter::data_for` never asks for one.
+fn status_info_qos(status_info: [u8; 4]) -> Option<ParameterList<'static>> {
     let mut list = ParameterList::new(inline_qos_encoding(Endianness::Little));
     list.push_octets(
         ParameterId::new(astrs_cdr::pid::STATUS_INFO),
-        kind.status_info().to_vec(),
+        status_info.to_vec(),
     )
     .ok()?;
     Some(list)
@@ -1056,893 +1626,4 @@ pub fn decode_outbound(outbound: &Outbound) -> BehaviorResult<Vec<Submessage<'_>
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
-    use super::*;
-    use crate::discovery::qos::{HistoryQos, LifespanQos, ReliabilityQos};
-    use crate::structure::{EntityKind, GuidPrefix, VendorId};
-    use std::net::Ipv4Addr;
-
-    fn writer_guid() -> Guid {
-        Guid::new(
-            GuidPrefix::vendor_scoped(VendorId::ASTRS, [1; 10]),
-            EntityId::user_defined(1, EntityKind::USER_WRITER_NO_KEY),
-        )
-    }
-
-    fn reader_guid() -> Guid {
-        Guid::new(
-            GuidPrefix::vendor_scoped(VendorId::ASTRS, [2; 10]),
-            EntityId::user_defined(1, EntityKind::USER_READER_NO_KEY),
-        )
-    }
-
-    fn topic() -> TopicKey {
-        TopicKey::new("rt/chatter", "std_msgs::msg::dds_::String_").expect("valid names")
-    }
-
-    fn reliable_writer() -> RtpsWriter {
-        RtpsWriter::new(
-            WriterConfig::new(writer_guid(), topic())
-                .with_qos(WriterQos::services_default())
-                .with_datagram_budget(1_400),
-        )
-    }
-
-    fn best_effort_writer() -> RtpsWriter {
-        RtpsWriter::new(
-            WriterConfig::new(writer_guid(), topic()).with_qos(WriterQos::sensor_data()),
-        )
-    }
-
-    fn proxy(reliable: bool) -> ReaderProxy {
-        ReaderProxy::new(
-            reader_guid(),
-            vec![Locator::udpv4(Ipv4Addr::LOCALHOST, 45_001)],
-            reliable,
-        )
-    }
-
-    fn submessages(outbound: &[Outbound]) -> Vec<Submessage<'_>> {
-        outbound
-            .iter()
-            .flat_map(|item| decode_outbound(item).expect("decode"))
-            .collect()
-    }
-
-    fn count_data(outbound: &[Outbound]) -> usize {
-        submessages(outbound)
-            .iter()
-            .filter(|submessage| submessage.as_data().is_some())
-            .count()
-    }
-
-    #[test]
-    fn a_writer_with_no_readers_emits_nothing() {
-        let mut writer = reliable_writer();
-        let now = Instant::now();
-        writer.write(vec![1, 2, 3, 4], None, now).unwrap();
-        assert!(writer.produce(now).unwrap().is_empty());
-        assert_eq!(writer.last_change(), SequenceNumber::FIRST);
-    }
-
-    #[test]
-    fn sequence_numbers_start_at_one_and_increase() {
-        let mut writer = reliable_writer();
-        let now = Instant::now();
-        assert_eq!(
-            writer.write(vec![1], None, now).unwrap(),
-            SequenceNumber::new(1)
-        );
-        assert_eq!(
-            writer.write(vec![2], None, now).unwrap(),
-            SequenceNumber::new(2)
-        );
-        assert_eq!(writer.last_change(), SequenceNumber::new(2));
-    }
-
-    #[test]
-    fn an_empty_history_reports_a_first_sn_above_its_last_sn() {
-        let writer = reliable_writer();
-        assert_eq!(writer.first_available(), SequenceNumber::FIRST);
-        assert_eq!(writer.last_change(), SequenceNumber::ZERO);
-        assert!(
-            writer.first_available() > writer.last_change(),
-            "the standard \"I hold nothing\" heartbeat"
-        );
-    }
-
-    #[test]
-    fn a_matched_reader_receives_every_sample_once() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        for value in 1..=3_u8 {
-            writer.write(vec![value; 4], None, now).unwrap();
-        }
-        let outbound = writer.produce(now).unwrap();
-        assert_eq!(count_data(&outbound), 3);
-
-        // A second produce sends nothing new.
-        let again = writer.produce(now).unwrap();
-        assert_eq!(count_data(&again), 0);
-    }
-
-    #[test]
-    fn every_datagram_names_its_destination() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        writer.write(vec![7], None, now).unwrap();
-        let outbound = writer.produce(now).unwrap();
-        let found = submessages(&outbound);
-        assert!(
-            found
-                .iter()
-                .any(|submessage| matches!(submessage, Submessage::InfoDestination(_))),
-            "a unicast datagram must carry INFO_DST"
-        );
-    }
-
-    #[test]
-    fn a_source_timestamp_becomes_an_info_ts() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        writer
-            .write(vec![1], Some(Time::new(1_700_000_000, 0)), now)
-            .unwrap();
-        let outbound = writer.produce(now).unwrap();
-        let found = submessages(&outbound);
-        assert!(
-            found
-                .iter()
-                .any(|submessage| matches!(submessage, Submessage::InfoTimestamp(_)))
-        );
-    }
-
-    #[test]
-    fn a_reliable_writer_heartbeats_and_a_best_effort_one_does_not() {
-        let now = Instant::now();
-
-        let mut reliable = reliable_writer();
-        reliable.match_reader(proxy(true));
-        reliable.write(vec![1], None, now).unwrap();
-        let outbound = reliable.produce(now).unwrap();
-        assert!(
-            submessages(&outbound)
-                .iter()
-                .any(|submessage| matches!(submessage, Submessage::Heartbeat(_)))
-        );
-
-        let mut best_effort = best_effort_writer();
-        best_effort.match_reader(proxy(false));
-        best_effort.write(vec![1], None, now).unwrap();
-        let outbound = best_effort.produce(now).unwrap();
-        assert!(
-            !submessages(&outbound)
-                .iter()
-                .any(|submessage| matches!(submessage, Submessage::Heartbeat(_))),
-            "a best-effort writer has no reliability protocol to run"
-        );
-        assert_eq!(count_data(&outbound), 1, "but it does send the sample");
-    }
-
-    #[test]
-    fn the_heartbeat_cadence_is_respected() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let start = Instant::now();
-        writer.write(vec![1], None, start).unwrap();
-
-        let first = writer.produce(start).unwrap();
-        let heartbeats = submessages(&first)
-            .iter()
-            .filter(|submessage| matches!(submessage, Submessage::Heartbeat(_)))
-            .count();
-        assert_eq!(heartbeats, 1);
-
-        let soon = start + StdDuration::from_millis(10);
-        let second = writer.produce(soon).unwrap();
-        assert!(
-            !submessages(&second)
-                .iter()
-                .any(|submessage| matches!(submessage, Submessage::Heartbeat(_))),
-            "the period has not elapsed"
-        );
-
-        let later = start + DEFAULT_HEARTBEAT_PERIOD + StdDuration::from_millis(1);
-        let third = writer.produce(later).unwrap();
-        assert!(
-            submessages(&third)
-                .iter()
-                .any(|submessage| matches!(submessage, Submessage::Heartbeat(_)))
-        );
-    }
-
-    #[test]
-    fn the_heartbeat_announces_the_real_window() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        for value in 1..=4_u8 {
-            writer.write(vec![value; 4], None, now).unwrap();
-        }
-        let outbound = writer.force_heartbeat(now).unwrap();
-        let found = submessages(&outbound);
-        let heartbeat = found
-            .iter()
-            .find_map(|submessage| match submessage {
-                Submessage::Heartbeat(heartbeat) => Some(heartbeat),
-                _ => None,
-            })
-            .expect("a heartbeat");
-        assert_eq!(heartbeat.first_sn, SequenceNumber::new(1));
-        assert_eq!(heartbeat.last_sn, SequenceNumber::new(4));
-        assert!(!heartbeat.is_final, "the reader has acknowledged nothing");
-    }
-
-    #[test]
-    fn a_caught_up_reader_gets_a_final_heartbeat() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        writer.write(vec![1], None, now).unwrap();
-        writer.produce(now).unwrap();
-
-        let acknack = crate::messages::AckNack::new(
-            reader_guid().entity_id,
-            writer_guid().entity_id,
-            SequenceNumberSet::new(SequenceNumber::new(2)),
-            1,
-        );
-        assert!(writer.on_acknack(reader_guid(), &acknack));
-        assert!(writer.is_acknowledged());
-
-        let outbound = writer.force_heartbeat(now).unwrap();
-        let found = submessages(&outbound);
-        let heartbeat = found
-            .iter()
-            .find_map(|submessage| match submessage {
-                Submessage::Heartbeat(heartbeat) => Some(heartbeat),
-                _ => None,
-            })
-            .expect("a heartbeat");
-        assert!(heartbeat.is_final);
-    }
-
-    #[test]
-    fn a_nacked_sample_is_retransmitted() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        for value in 1..=3_u8 {
-            writer.write(vec![value; 4], None, now).unwrap();
-        }
-        writer.produce(now).unwrap();
-        assert_eq!(count_data(&writer.produce(now).unwrap()), 0);
-
-        // "I have 1; 2 and 3 are missing."
-        let set = SequenceNumberSet::from_numbers(
-            SequenceNumber::new(2),
-            [SequenceNumber::new(2), SequenceNumber::new(3)],
-        )
-        .unwrap();
-        let acknack =
-            crate::messages::AckNack::new(reader_guid().entity_id, writer_guid().entity_id, set, 1);
-        assert!(writer.on_acknack(reader_guid(), &acknack));
-
-        let repairs = writer.produce(now).unwrap();
-        assert_eq!(count_data(&repairs), 2, "both missing samples come back");
-    }
-
-    #[test]
-    fn a_stale_acknack_is_ignored() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        writer.write(vec![1], None, now).unwrap();
-        writer.produce(now).unwrap();
-
-        let ack = crate::messages::AckNack::new(
-            reader_guid().entity_id,
-            writer_guid().entity_id,
-            SequenceNumberSet::new(SequenceNumber::new(2)),
-            5,
-        );
-        assert!(writer.on_acknack(reader_guid(), &ack));
-        let stale = crate::messages::AckNack::new(
-            reader_guid().entity_id,
-            writer_guid().entity_id,
-            SequenceNumberSet::from_numbers(SequenceNumber::FIRST, [SequenceNumber::FIRST])
-                .unwrap(),
-            5,
-        );
-        assert!(!writer.on_acknack(reader_guid(), &stale));
-        assert_eq!(count_data(&writer.produce(now).unwrap()), 0);
-    }
-
-    #[test]
-    fn an_acknack_from_an_unmatched_reader_is_ignored() {
-        let mut writer = reliable_writer();
-        let acknack = crate::messages::AckNack::new(
-            reader_guid().entity_id,
-            writer_guid().entity_id,
-            SequenceNumberSet::new(SequenceNumber::FIRST),
-            1,
-        );
-        assert!(!writer.on_acknack(reader_guid(), &acknack));
-    }
-
-    #[test]
-    fn an_evicted_sample_becomes_a_gap() {
-        let mut writer = RtpsWriter::new(WriterConfig::new(writer_guid(), topic()).with_qos(
-            WriterQos {
-                reliability: ReliabilityQos::reliable(),
-                history: HistoryQos::keep_last(2),
-                ..WriterQos::default()
-            },
-        ));
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        for value in 1..=4_u8 {
-            writer.write(vec![value; 4], None, now).unwrap();
-        }
-        // The reader asks for sample 1, which KEEP_LAST 2 has evicted.
-        let set = SequenceNumberSet::from_numbers(SequenceNumber::FIRST, [SequenceNumber::FIRST])
-            .unwrap();
-        let acknack =
-            crate::messages::AckNack::new(reader_guid().entity_id, writer_guid().entity_id, set, 1);
-        writer.on_acknack(reader_guid(), &acknack);
-
-        let outbound = writer.produce(now).unwrap();
-        let found = submessages(&outbound);
-        let gap = found
-            .iter()
-            .find_map(|submessage| match submessage {
-                Submessage::Gap(gap) => Some(gap),
-                _ => None,
-            })
-            .expect("a GAP for the evicted sample");
-        assert!(gap.covers(SequenceNumber::FIRST));
-    }
-
-    #[test]
-    fn an_expired_sample_is_dropped_and_reported() {
-        let origin = Instant::now();
-        let mut writer = RtpsWriter::new(WriterConfig::new(writer_guid(), topic()).with_qos(
-            WriterQos {
-                history: HistoryQos::keep_all(),
-                lifespan: LifespanQos::from_millis(50),
-                ..WriterQos::default()
-            },
-        ));
-        writer.write(vec![1], None, origin).unwrap();
-        writer
-            .write(vec![2], None, origin + StdDuration::from_millis(40))
-            .unwrap();
-
-        let expired = writer.expire(origin + StdDuration::from_millis(60));
-        assert_eq!(expired, vec![SequenceNumber::FIRST]);
-        assert_eq!(writer.cache().len(), 1);
-    }
-
-    #[test]
-    fn keep_all_reclaims_what_every_reader_acknowledged() {
-        let mut writer = RtpsWriter::new(WriterConfig::new(writer_guid(), topic()).with_qos(
-            WriterQos {
-                history: HistoryQos::keep_all(),
-                ..WriterQos::default()
-            },
-        ));
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        for value in 1..=5_u8 {
-            writer.write(vec![value; 4], None, now).unwrap();
-        }
-        assert_eq!(writer.reclaim(), 0, "nothing acknowledged yet");
-
-        let acknack = crate::messages::AckNack::new(
-            reader_guid().entity_id,
-            writer_guid().entity_id,
-            SequenceNumberSet::new(SequenceNumber::new(4)),
-            1,
-        );
-        writer.on_acknack(reader_guid(), &acknack);
-        assert_eq!(writer.acked_by_all(), Some(SequenceNumber::new(3)));
-        assert_eq!(writer.reclaim(), 3);
-        assert_eq!(
-            writer.cache().min_sequence_number(),
-            Some(SequenceNumber::new(4))
-        );
-    }
-
-    #[test]
-    fn keep_last_never_reclaims() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        writer.write(vec![1], None, now).unwrap();
-        let acknack = crate::messages::AckNack::new(
-            reader_guid().entity_id,
-            writer_guid().entity_id,
-            SequenceNumberSet::new(SequenceNumber::new(2)),
-            1,
-        );
-        writer.on_acknack(reader_guid(), &acknack);
-        assert_eq!(
-            writer.reclaim(),
-            0,
-            "a KEEP_LAST cache must keep its history for the next late joiner"
-        );
-    }
-
-    #[test]
-    fn a_large_sample_is_fragmented() {
-        let mut writer = RtpsWriter::new(
-            WriterConfig::new(writer_guid(), topic())
-                .with_qos(WriterQos::services_default())
-                .with_fragmentation(1_000, 500)
-                .with_datagram_budget(1_400),
-        );
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        writer.write(vec![0xab_u8; 4_000], None, now).unwrap();
-
-        let outbound = writer.produce(now).unwrap();
-        let found = submessages(&outbound);
-        let fragments: Vec<_> = found
-            .iter()
-            .filter_map(|submessage| submessage.as_data_frag())
-            .collect();
-        let carried: u32 = fragments
-            .iter()
-            .map(|fragment| u32::from(fragment.fragments_in_submessage))
-            .sum();
-        assert_eq!(carried, 8, "4000 octets at 500 per fragment");
-        assert_eq!(
-            fragments.len(),
-            4,
-            "a 1400-octet datagram holds two 500-octet fragments"
-        );
-        assert_eq!(fragments[0].sample_size, 4_000);
-        assert_eq!(fragments[0].fragment_size, 500);
-        assert!(
-            found
-                .iter()
-                .all(|submessage| submessage.as_data().is_none()),
-            "a fragmented sample never also goes as a plain DATA"
-        );
-    }
-
-    #[test]
-    fn a_small_sample_is_not_fragmented() {
-        let writer = reliable_writer();
-        assert!(writer.fragment_plan(100).unwrap().is_none());
-        let plan = writer
-            .fragment_plan(FRAGMENTATION_THRESHOLD + 1)
-            .unwrap()
-            .expect("above the threshold");
-        assert!(plan.is_needed());
-    }
-
-    #[test]
-    fn the_datagram_budget_lowers_the_threshold_below_the_policy() {
-        // The policy says 64 KiB; a 1400-octet datagram says otherwise, and
-        // the physical limit wins.
-        let tight = WriterConfig::new(writer_guid(), topic()).with_datagram_budget(1_400);
-        assert_eq!(tight.fragmentation_threshold, FRAGMENTATION_THRESHOLD);
-        assert_eq!(tight.effective_threshold(), 1_400 - DATAGRAM_OVERHEAD);
-
-        let writer = RtpsWriter::new(tight);
-        assert!(writer.fragment_plan(1_000).unwrap().is_none());
-        assert!(writer.fragment_plan(2_000).unwrap().is_some());
-
-        // With room to spare the policy is what binds.
-        let roomy = WriterConfig::new(writer_guid(), topic())
-            .with_datagram_budget(crate::messages::MAX_UDP_PAYLOAD)
-            .with_fragmentation(1_000, 500);
-        assert_eq!(roomy.effective_threshold(), 1_000);
-    }
-
-    #[test]
-    fn matching_the_same_reader_twice_keeps_its_state() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        writer.write(vec![1], None, now).unwrap();
-        writer.produce(now).unwrap();
-
-        writer.match_reader(proxy(true));
-        assert_eq!(writer.matched_reader_count(), 1);
-        assert_eq!(
-            count_data(&writer.produce(now).unwrap()),
-            0,
-            "re-matching must not resend everything"
-        );
-    }
-
-    #[test]
-    fn unmatching_stops_delivery() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        assert!(writer.is_matched(reader_guid()));
-        assert!(writer.unmatch_reader(reader_guid()));
-        assert!(!writer.unmatch_reader(reader_guid()));
-
-        let now = Instant::now();
-        writer.write(vec![1], None, now).unwrap();
-        assert!(writer.produce(now).unwrap().is_empty());
-    }
-
-    #[test]
-    fn unmatching_a_participant_removes_all_of_its_readers() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        writer.match_reader(ReaderProxy::new(
-            Guid::new(
-                reader_guid().prefix,
-                EntityId::user_defined(2, EntityKind::USER_READER_NO_KEY),
-            ),
-            vec![Locator::udpv4(Ipv4Addr::LOCALHOST, 45_002)],
-            true,
-        ));
-        assert_eq!(writer.matched_reader_count(), 2);
-        assert_eq!(writer.unmatch_participant(reader_guid()), 2);
-        assert_eq!(writer.matched_reader_count(), 0);
-    }
-
-    #[test]
-    fn a_reader_with_no_locators_is_skipped_rather_than_failing() {
-        let mut writer = reliable_writer();
-        writer.match_reader(ReaderProxy::new(reader_guid(), Vec::new(), true));
-        let now = Instant::now();
-        writer.write(vec![1], None, now).unwrap();
-        assert!(writer.produce(now).unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_deactivated_reader_receives_nothing() {
-        let mut writer = reliable_writer();
-        let mut idle = proxy(true);
-        idle.deactivate();
-        writer.match_reader(idle);
-        let now = Instant::now();
-        writer.write(vec![1], None, now).unwrap();
-        // `match_reader` on a fresh GUID stores the proxy as given.
-        assert_eq!(count_data(&writer.produce(now).unwrap()), 0);
-    }
-
-    #[test]
-    fn a_best_effort_writer_releases_its_keep_all_history() {
-        let mut writer = RtpsWriter::new(WriterConfig::new(writer_guid(), topic()).with_qos(
-            WriterQos {
-                reliability: ReliabilityQos::best_effort(),
-                history: HistoryQos::keep_all(),
-                ..WriterQos::default()
-            },
-        ));
-        writer.match_reader(proxy(false));
-        let now = Instant::now();
-        for value in 1..=3_u8 {
-            writer.write(vec![value; 4], None, now).unwrap();
-        }
-        writer.produce(now).unwrap();
-        assert_eq!(
-            writer.acked_by_all(),
-            None,
-            "there is no reliable reader to wait for"
-        );
-    }
-
-    #[test]
-    fn an_announcement_addresses_arbitrary_locators() {
-        let mut writer = reliable_writer();
-        let now = Instant::now();
-        let number = writer.write(vec![1, 2, 3, 4], None, now).unwrap();
-        let outbound = writer
-            .announce(
-                number,
-                crate::structure::ENTITYID_SPDP_BUILTIN_PARTICIPANT_READER,
-                vec![Locator::udpv4(Ipv4Addr::new(239, 255, 0, 1), 7_400)],
-            )
-            .unwrap()
-            .expect("the sample is held");
-        assert!(outbound.is_deliverable());
-        let found = decode_outbound(&outbound).unwrap();
-        let data = found.iter().find_map(Submessage::as_data).expect("a DATA");
-        assert_eq!(
-            data.reader_id,
-            crate::structure::ENTITYID_SPDP_BUILTIN_PARTICIPANT_READER
-        );
-        assert_eq!(data.writer_sn, number);
-    }
-
-    #[test]
-    fn announcing_a_sample_that_is_gone_yields_nothing() {
-        let writer = reliable_writer();
-        assert!(
-            writer
-                .announce(
-                    SequenceNumber::new(99),
-                    EntityId::UNKNOWN,
-                    vec![Locator::udpv4(Ipv4Addr::LOCALHOST, 1)]
-                )
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn announcing_to_nowhere_yields_nothing() {
-        let mut writer = reliable_writer();
-        let now = Instant::now();
-        let number = writer.write(vec![1], None, now).unwrap();
-        assert!(
-            writer
-                .announce(number, EntityId::UNKNOWN, Vec::new())
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn a_liveliness_assertion_is_a_final_heartbeat_with_the_l_flag() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        let outbound = writer.assert_liveliness(now).unwrap();
-        let found = submessages(&outbound);
-        let heartbeat = found
-            .iter()
-            .find_map(|submessage| match submessage {
-                Submessage::Heartbeat(heartbeat) => Some(heartbeat),
-                _ => None,
-            })
-            .expect("a heartbeat");
-        assert!(heartbeat.liveliness);
-        assert!(heartbeat.is_final);
-    }
-
-    #[test]
-    fn a_nack_frag_requests_the_whole_sample_again() {
-        let mut writer = RtpsWriter::new(
-            WriterConfig::new(writer_guid(), topic())
-                .with_qos(WriterQos::services_default())
-                .with_fragmentation(1_000, 500)
-                .with_datagram_budget(1_400),
-        );
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        let number = writer.write(vec![0xcd_u8; 4_000], None, now).unwrap();
-        writer.produce(now).unwrap();
-        assert!(writer.produce(now).unwrap().is_empty());
-
-        let missing = crate::structure::FragmentNumberSet::from_numbers(
-            crate::structure::FragmentNumber::new(3),
-            [crate::structure::FragmentNumber::new(3)],
-        )
-        .unwrap();
-        let nack = NackFrag::new(
-            reader_guid().entity_id,
-            writer_guid().entity_id,
-            number,
-            missing,
-            1,
-        );
-        assert!(writer.on_nack_frag(reader_guid(), &nack));
-
-        let repairs = writer.produce(now).unwrap();
-        let carried: u32 = submessages(&repairs)
-            .iter()
-            .filter_map(|submessage| submessage.as_data_frag())
-            .map(|fragment| u32::from(fragment.fragments_in_submessage))
-            .sum();
-        assert_eq!(carried, 8, "the whole sample is resent");
-    }
-
-    #[test]
-    fn a_nack_frag_for_a_sample_that_is_gone_is_ignored() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let missing =
-            crate::structure::FragmentNumberSet::new(crate::structure::FragmentNumber::FIRST);
-        let nack = NackFrag::new(
-            reader_guid().entity_id,
-            writer_guid().entity_id,
-            SequenceNumber::new(42),
-            missing,
-            1,
-        );
-        assert!(!writer.on_nack_frag(reader_guid(), &nack));
-    }
-
-    #[test]
-    fn every_datagram_stays_within_the_budget() {
-        let mut writer = RtpsWriter::new(
-            WriterConfig::new(writer_guid(), topic())
-                .with_qos(WriterQos {
-                    history: HistoryQos::keep_all(),
-                    ..WriterQos::services_default()
-                })
-                .with_datagram_budget(600),
-        );
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        for _ in 0..20 {
-            writer.write(vec![0x5a_u8; 100], None, now).unwrap();
-        }
-        let outbound = writer.produce(now).unwrap();
-        assert!(
-            outbound.len() > 1,
-            "twenty samples cannot fit in one datagram"
-        );
-        for item in &outbound {
-            assert!(
-                item.len() <= 600,
-                "a datagram of {} octets exceeds the budget",
-                item.len()
-            );
-        }
-        assert_eq!(count_data(&outbound), 20, "and every sample still went");
-    }
-
-    #[test]
-    fn a_volatile_writer_gives_a_late_joiner_nothing() {
-        let mut writer = RtpsWriter::new(WriterConfig::new(writer_guid(), topic()).with_qos(
-            WriterQos {
-                reliability: ReliabilityQos::reliable(),
-                durability: crate::discovery::qos::DurabilityQos::volatile(),
-                history: HistoryQos::keep_last(10),
-                ..WriterQos::default()
-            },
-        ));
-        let now = Instant::now();
-        for value in 1..=3_u8 {
-            writer.write(vec![value; 4], None, now).unwrap();
-        }
-        // The reader arrives after the fact.
-        writer.match_reader(proxy(true));
-        assert_eq!(
-            count_data(&writer.produce(now).unwrap()),
-            0,
-            "VOLATILE means the late joiner missed them"
-        );
-        // …but everything written from now on does arrive.
-        writer.write(vec![4; 4], None, now).unwrap();
-        assert_eq!(count_data(&writer.produce(now).unwrap()), 1);
-    }
-
-    #[test]
-    fn a_transient_local_writer_replays_its_history_to_a_late_joiner() {
-        let mut writer = RtpsWriter::new(
-            WriterConfig::new(writer_guid(), topic()).with_qos(WriterQos::latched(10)),
-        );
-        let now = Instant::now();
-        for value in 1..=3_u8 {
-            writer.write(vec![value; 4], None, now).unwrap();
-        }
-        writer.match_reader(proxy(true));
-        assert_eq!(
-            count_data(&writer.produce(now).unwrap()),
-            3,
-            "TRANSIENT_LOCAL replays everything the history still holds"
-        );
-    }
-
-    #[test]
-    fn a_scattered_gap_names_only_the_numbers_that_are_gone() {
-        let mut writer = RtpsWriter::new(WriterConfig::new(writer_guid(), topic()).with_qos(
-            WriterQos {
-                reliability: ReliabilityQos::reliable(),
-                history: HistoryQos::keep_all(),
-                ..WriterQos::default()
-            },
-        ));
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        for value in 1..=9_u8 {
-            writer.write(vec![value; 4], None, now).unwrap();
-        }
-        // Drop 3 and 9 from the history, keeping 4..=8.
-        assert!(writer.forget(SequenceNumber::new(3)));
-        assert!(writer.forget(SequenceNumber::new(9)));
-
-        // The reader has 1 and 2 and asks for everything from 3.
-        let set = SequenceNumberSet::from_numbers(
-            SequenceNumber::new(3),
-            (3..=9).map(SequenceNumber::new),
-        )
-        .unwrap();
-        let acknack =
-            crate::messages::AckNack::new(reader_guid().entity_id, writer_guid().entity_id, set, 1);
-        writer.on_acknack(reader_guid(), &acknack);
-
-        let outbound = writer.produce(now).unwrap();
-        let found = submessages(&outbound);
-        let gap = found
-            .iter()
-            .find_map(|submessage| match submessage {
-                Submessage::Gap(gap) => Some(gap),
-                _ => None,
-            })
-            .expect("a GAP");
-        let irrelevant: Vec<i64> = gap.irrelevant().map(SequenceNumber::value).collect();
-        assert_eq!(
-            irrelevant,
-            vec![3, 9],
-            "the samples between the holes are still held and must not be gapped"
-        );
-        assert!(!gap.covers(SequenceNumber::new(5)));
-        assert_eq!(count_data(&outbound), 5, "4..=8 are still there and go out");
-    }
-
-    #[test]
-    fn a_disposal_goes_out_as_a_key_with_a_status_info() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        let gone = Guid::new(
-            reader_guid().prefix,
-            EntityId::user_defined(9, EntityKind::USER_READER_NO_KEY),
-        );
-        writer.dispose(gone, now).expect("dispose");
-
-        let outbound = writer.produce(now).unwrap();
-        let found = submessages(&outbound);
-        let data = found
-            .iter()
-            .find_map(Submessage::as_data)
-            .expect("a DATA carrying the disposal");
-
-        assert!(
-            matches!(data.payload, DataPayload::Key(_)),
-            "a disposal names the instance, it does not carry a value"
-        );
-        assert!(data.flags().has(crate::messages::flags::KEY));
-        let qos = data.inline_qos.as_ref().expect("PID_STATUS_INFO");
-        let status = qos
-            .get_by_base(astrs_cdr::pid::STATUS_INFO)
-            .expect("the status parameter");
-        assert_eq!(
-            ChangeKind::from_status_info([
-                status.value[0],
-                status.value[1],
-                status.value[2],
-                status.value[3],
-            ]),
-            ChangeKind::NotAliveDisposed
-        );
-
-        // …and the key octets are the GUID, at the offset a receiver reads.
-        let key = data.payload.payload().expect("key octets").as_slice();
-        assert_eq!(
-            &key[astrs_cdr::ENCAPSULATION_HEADER_LEN..],
-            &gone.to_bytes()
-        );
-    }
-
-    #[test]
-    fn a_live_sample_carries_no_status_info() {
-        let mut writer = reliable_writer();
-        writer.match_reader(proxy(true));
-        let now = Instant::now();
-        writer.write(vec![1, 2, 3, 4], None, now).unwrap();
-        let outbound = writer.produce(now).unwrap();
-        let found = submessages(&outbound);
-        let data = found.iter().find_map(Submessage::as_data).expect("a DATA");
-        assert!(data.inline_qos.is_none());
-    }
-
-    #[test]
-    fn the_writer_reports_its_own_configuration() {
-        let writer = reliable_writer();
-        assert_eq!(writer.guid(), writer_guid());
-        assert_eq!(writer.topic().topic_name, "rt/chatter");
-        assert!(writer.qos().is_reliable());
-        assert!(writer.is_reliable());
-        assert_eq!(writer.config().datagram_budget, 1_400);
-        assert_eq!(writer.matched_readers().count(), 0);
-    }
-}
+mod tests;
